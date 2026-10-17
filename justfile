@@ -6,7 +6,9 @@ default:
 setup:
     pnpm install
     pnpm --dir examples/storefront install
-    bun install --cwd examples/bun-dotenv
+    pnpm --dir examples/dispatch install
+    pnpm --dir examples/northwind install
+    pnpm --dir examples/bun-dotenv install
 
 # Run the daemon in the foreground (Traefik on port 80, Maple, the dashboard)
 daemon:

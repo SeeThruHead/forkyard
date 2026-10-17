@@ -1,13 +1,14 @@
 {
   "name": "shortly",
   "private": true,
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
   "type": "module",
   "scripts": {
     "dev": "forkyard up",
     "down": "forkyard down"
-  }
+  },
+  "devDependencies": {
+    "effect": "4.0.5",
+    "forkyard": "link:../.."
+  },
+  "packageManager": "pnpm@10.33.0"
 }

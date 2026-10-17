@@ -1,2 +1,4 @@
 node_modules
 .data
+apps/*/src/generated/
+apps/billing-api/db/client.ts
