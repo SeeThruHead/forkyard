@@ -40,7 +40,8 @@
     "lint:fixtures": "oxlint -c test/lint/fixtures.oxlintrc.json test/lint/fixtures",
     "prepare": "lefthook install",
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.types.json && pnpm run build:dashboard && chmod +x dist/bin/forkyard.js",
-    "prepack": "pnpm run build"
+    "prepack": "pnpm run build",
+    "test:container": "harness/container/run.sh"
   },
   "dependencies": {
     "@effect/atom-react": "4.0.5",

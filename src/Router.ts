@@ -19,6 +19,18 @@ export const traefikConfig = (routes: Readonly<Record<string, Route>>, upstreamH
   }
 }
 
+const hostsBegin = "# forkyard begin: names for running worktrees, managed by forkyard"
+const hostsEnd = "# forkyard end"
+
+export const withHostsBlock = (content: string, hosts: ReadonlyArray<string>) => {
+  const start = content.indexOf(hostsBegin)
+  const end = content.indexOf(hostsEnd)
+  const outside = start === -1 || end === -1 ? content : content.slice(0, start) + content.slice(end + hostsEnd.length)
+  const base = outside.replace(/\n+$/, "")
+  if (hosts.length === 0) return `${base}\n`
+  return `${base}\n${hostsBegin}\n${hosts.map((host) => `127.0.0.1 ${host}`).join("\n")}\n${hostsEnd}\n`
+}
+
 export class Router extends Context.Service<
   Router,
   {
@@ -26,7 +38,7 @@ export class Router extends Context.Service<
     readonly routes: Effect.Effect<Readonly<Record<string, Route>>>
   }
 >()("forkyard/Router") {
-  static readonly layer = (options: { readonly file: string; readonly upstreamHost: string }) =>
+  static readonly layer = (options: { readonly file: string; readonly upstreamHost: string; readonly hostsFile?: string | undefined }) =>
     Layer.effect(
       Router,
       Effect.gen(function* () {
@@ -34,11 +46,18 @@ export class Router extends Context.Service<
         const path = yield* Path.Path
         const state = yield* SubscriptionRef.make<Readonly<Record<string, Route>>>({})
 
+        const writeHosts = Effect.fn("Router.writeHosts")(function* (file: string, hosts: ReadonlyArray<string>) {
+          const current = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""))
+          const next = withHostsBlock(current, [...hosts].sort())
+          if (next !== current) yield* fs.writeFileString(file, next)
+        })
+
         const write = Effect.fn("Router.write")(function* (routes: Readonly<Record<string, Route>>) {
           const temp = `${options.file}.tmp`
           yield* fs.makeDirectory(path.dirname(options.file), { recursive: true })
           yield* fs.writeFileString(temp, JSON.stringify(traefikConfig(routes, options.upstreamHost), null, 2))
           yield* fs.rename(temp, options.file)
+          if (options.hostsFile) yield* writeHosts(options.hostsFile, Object.keys(routes))
           yield* Effect.annotateCurrentSpan({ "forkyard.routes": Object.keys(routes).length })
         }, Effect.orDie)
 

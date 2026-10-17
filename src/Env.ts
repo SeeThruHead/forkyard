@@ -33,13 +33,13 @@ const repoBins = (worktree: Worktree, cwd: string, basePath: string) =>
     .filter((entry) => entry.length > 0)
     .join(":")
 
-export type DaemonContext = { readonly otlpUrl: string; readonly basePath: string }
+export type DaemonContext = { readonly otlpUrl: string | undefined; readonly otlpHeaders: string; readonly basePath: string }
 
 export const daemonEnv = (
   worktree: Worktree,
   service: { readonly name: ServiceName; readonly cwd: string },
   port: Port | undefined,
-  { otlpUrl, basePath }: DaemonContext
+  { otlpUrl, otlpHeaders, basePath }: DaemonContext
 ): OwnedEnv => ({
   ...owned("forkyard", {
     PATH: repoBins(worktree, service.cwd, basePath),
@@ -48,11 +48,14 @@ export const daemonEnv = (
     FORKYARD_SERVICE: service.name,
     ...(port ? { PORT: String(port) } : {})
   }),
-  ...owned("forkyard:otel", {
-    OTEL_EXPORTER_OTLP_ENDPOINT: otlpUrl,
-    OTEL_SERVICE_NAME: service.name,
-    OTEL_RESOURCE_ATTRIBUTES: `service.namespace=${worktree.id},forkyard.worktree=${worktree.id},forkyard.project=${worktree.project},forkyard.branch=${worktree.branch}`
-  })
+  ...(otlpUrl
+    ? owned("forkyard:otel", {
+        OTEL_EXPORTER_OTLP_ENDPOINT: otlpUrl,
+        ...(otlpHeaders ? { OTEL_EXPORTER_OTLP_HEADERS: otlpHeaders } : {}),
+        OTEL_SERVICE_NAME: service.name,
+        OTEL_RESOURCE_ATTRIBUTES: `service.namespace=${worktree.id},forkyard.worktree=${worktree.id},forkyard.project=${worktree.project},forkyard.branch=${worktree.branch}`
+      })
+    : {})
 })
 
 export const mergeEnv = (sourced: SourcedEnv, pristine: SourcedEnv, ownedEnv: OwnedEnv): ReadonlyArray<EnvVar> =>

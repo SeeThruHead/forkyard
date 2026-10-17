@@ -7,3 +7,4 @@ dashboard/dist/
 dist
 node_modules/
 run/
+harness/container/forkyard.tgz

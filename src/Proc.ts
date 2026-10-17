@@ -87,7 +87,7 @@ export class Proc extends Context.Service<
     readonly processTable: Effect.Effect<string>
   }
 >()("forkyard/Proc") {
-  static readonly layer = (options: { readonly otlpUrl: string }) =>
+  static readonly layer = (options: { readonly otlpUrl: string | undefined }) =>
     Layer.effect(
       Proc,
       Effect.gen(function* () {
@@ -123,9 +123,9 @@ export class Proc extends Context.Service<
             kind: "internal"
           })
 
-        const processLogger = (spawn: SpawnOptions, run: RunInfo) =>
+        const processLogger = (spawn: SpawnOptions, run: RunInfo, otlpUrl: string) =>
           OtlpLogger.make({
-            url: `${options.otlpUrl}/v1/logs`,
+            url: `${otlpUrl}/v1/logs`,
             resource: {
               serviceName: spawn.service,
               attributes: {
@@ -184,7 +184,7 @@ export class Proc extends Context.Service<
           span: Tracer.Span,
           logged: Deferred.Deferred<void>
         ) {
-          const logger = spawn.telemetry ? yield* processLogger(spawn, run) : undefined
+          const logger = spawn.telemetry && options.otlpUrl ? yield* processLogger(spawn, run, options.otlpUrl) : undefined
           const exported = exportLine(logger)
           const readyCheck = signalReadyLine(spawn, logged)
           const publish = ({ entry, record }: { readonly entry: OutputLine; readonly record: RunLine }) =>

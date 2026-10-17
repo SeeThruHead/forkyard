@@ -19,3 +19,16 @@ describe("worktree names", () => {
     expect(firstFreeName(main, project, new Set(["main.storefront"]))).toBe("main")
   })
 })
+
+describe("hosts file block", () => {
+  it("adds, replaces and removes forkyard's block without touching other lines", async () => {
+    const { withHostsBlock } = await import("../src/Router.ts")
+    const base = "127.0.0.1 localhost\n"
+    const once = withHostsBlock(base, ["api.main.app.localhost"])
+    expect(once).toContain("127.0.0.1 api.main.app.localhost")
+    const twice = withHostsBlock(once, ["web.main.app.localhost"])
+    expect(twice).not.toContain("api.main.app.localhost")
+    expect(twice.startsWith("127.0.0.1 localhost")).toBe(true)
+    expect(withHostsBlock(twice, [])).toBe(base)
+  })
+})

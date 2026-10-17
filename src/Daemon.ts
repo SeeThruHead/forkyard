@@ -28,7 +28,7 @@ import { Runs } from "./Runs.ts"
 import { Status } from "./Status.ts"
 import * as Store from "./Store.ts"
 import { Supervisor } from "./Supervisor.ts"
-import { Maple, observability } from "./Telemetry.ts"
+import { Maple, observability, type TelemetryTarget } from "./Telemetry.ts"
 import { Worktrees } from "./Worktrees.ts"
 
 export type DaemonOptions = {
@@ -43,9 +43,12 @@ export type DaemonOptions = {
   readonly domain: string
   readonly version: string
   readonly startupConcurrency: number
+  readonly proxyMode: "docker" | "binary"
+  readonly telemetry: TelemetryTarget
+  readonly hostsFile: string | undefined
 }
 
-const forwardToMaple = Effect.fn("Daemon.forwardToMaple")(
+const forwardTelemetry = Effect.fn("Daemon.forwardTelemetry")(
   function* (otlpUrl: string) {
     const http = yield* HttpClient.HttpClient
     const request = yield* HttpServerRequest.HttpServerRequest
@@ -61,20 +64,19 @@ const forwardToMaple = Effect.fn("Daemon.forwardToMaple")(
   Effect.withTracerEnabled(false)
 )
 
-const otlpProxy = HttpRouter.use((router) =>
-  Effect.gen(function* () {
-    const maple = yield* Maple
-    const http = yield* HttpClient.HttpClient
+const otlpProxy = (otlpUrl: string) =>
+  HttpRouter.use((router) =>
+    Effect.gen(function* () {
+      const http = yield* HttpClient.HttpClient
+      yield* router.add("POST", "/otlp/*", forwardTelemetry(otlpUrl).pipe(Effect.provideService(HttpClient.HttpClient, http)))
+    })
+  )
 
-    yield* router.add("POST", "/otlp/*", forwardToMaple(maple.otlpUrl).pipe(Effect.provideService(HttpClient.HttpClient, http)))
-  })
-)
-
-const dashboardServer = (options: DaemonOptions) =>
+const dashboardServer = (options: DaemonOptions, otlpUrl: string | undefined) =>
   HttpRouter.serve(
     Layer.mergeAll(
       RpcServer.layer(ForkyardRpcs).pipe(Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" }))),
-      otlpProxy,
+      otlpUrl ? otlpProxy(otlpUrl) : Layer.empty,
       HttpStaticServer.layer({ root: options.dashboardDir, spa: true, cacheControl: "no-store" })
     ),
     { disableLogger: true }
@@ -93,26 +95,46 @@ const cliServer = (options: DaemonOptions) =>
     Layer.provide(Layer.succeed(References.UnhandledLogLevel, "Debug"))
   )
 
+const otlpUrlOf = (options: DaemonOptions) => {
+  if (options.telemetry._tag === "Off") return undefined
+  if (options.telemetry._tag === "Remote") return options.telemetry.url
+  return `http://127.0.0.1:${options.maplePort}`
+}
+
+const otlpHeadersOf = (options: DaemonOptions) =>
+  options.telemetry._tag === "Remote"
+    ? Object.entries(options.telemetry.headers)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(",")
+    : ""
+
+const telemetryLayer = (options: DaemonOptions, otlpUrl: string | undefined) => {
+  const resource = { serviceVersion: options.version, attributes: { "service.namespace": "forkyard" } }
+  if (!otlpUrl) return Layer.empty
+  if (options.telemetry._tag === "Remote") return observability(otlpUrl, options.telemetry.headers, resource)
+  return observability(otlpUrl, {}, resource).pipe(
+    Layer.provideMerge(Maple.layer({ port: options.maplePort, host: `maple.${options.domain}`, proxyPort: options.proxyPort }))
+  )
+}
+
 export const layer = (options: DaemonOptions) => {
   const dashboardUrl = `http://forkyard.${options.domain}${options.proxyPort === 80 ? "" : `:${options.proxyPort}`}`
-  const otlpUrl = `http://127.0.0.1:${options.maplePort}`
+  const otlpUrl = otlpUrlOf(options)
 
   const records = Layer.mergeAll(
     Status.layer,
     FetchHttpClient.layer,
     Registry.layer,
     Runs.layer,
-    Router.layer({ file: `${options.traefikDir}/forkyard.yml`, upstreamHost: options.upstreamHost })
+    Router.layer({ file: `${options.traefikDir}/forkyard.yml`, upstreamHost: options.upstreamHost, hostsFile: options.hostsFile })
   ).pipe(Layer.provideMerge(Store.layer(options.stateFile)), Layer.provideMerge(Platform.layer))
 
   const processes = Proc.layer({ otlpUrl }).pipe(Layer.provideMerge(records))
 
-  const telemetry = observability({ serviceVersion: options.version, attributes: { "service.namespace": "forkyard" } }).pipe(
-    Layer.provideMerge(Maple.layer({ port: options.maplePort, host: `maple.${options.domain}`, proxyPort: options.proxyPort }))
-  )
+  const telemetry = telemetryLayer(options, otlpUrl)
 
   const worktrees = Worktrees.layer({ domain: options.domain, proxyPort: options.proxyPort }).pipe(
-    Layer.provideMerge(Supervisor.layer({ startupConcurrency: options.startupConcurrency, otlpUrl })),
+    Layer.provideMerge(Supervisor.layer({ startupConcurrency: options.startupConcurrency, otlpUrl, otlpHeaders: otlpHeadersOf(options) })),
     Layer.provideMerge(EnvResolver.layer),
     Layer.provideMerge(InfraManager.layer({ domain: options.domain, proxyPort: options.proxyPort }))
   )
@@ -122,8 +144,9 @@ export const layer = (options: DaemonOptions) => {
   const servers = Layer.mergeAll(
     announce,
     cliServer(options),
-    dashboardServer(options),
+    dashboardServer(options, otlpUrl),
     Proxy.layer({
+      mode: options.proxyMode,
       traefikDir: options.traefikDir,
       port: options.proxyPort,
       dashboardHost: `forkyard.${options.domain}`,

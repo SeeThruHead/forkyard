@@ -85,17 +85,31 @@ export class Maple extends Context.Service<
     ).pipe(Layer.provide(FetchHttpClient.layer))
 }
 
-export const observability = (resource: { readonly serviceVersion: string; readonly attributes: Record<string, unknown> }) =>
-  Layer.unwrap(
-    Effect.gen(function* () {
-      const maple = yield* Maple
-      return Otlp.layer({
-        baseUrl: maple.otlpUrl,
-        resource: { serviceName: "forkyard", serviceVersion: resource.serviceVersion, attributes: resource.attributes },
-        loggerMergeWithExisting: true,
-        loggerExportInterval: "1 second",
-        tracerExportInterval: "1 second",
-        metricsExportInterval: "5 seconds"
-      })
-    })
-  ).pipe(Layer.provide(OtlpSerialization.layerJson), Layer.provide(FetchHttpClient.layer))
+export type TelemetryTarget =
+  | { readonly _tag: "Local" }
+  | { readonly _tag: "Remote"; readonly url: string; readonly headers: Readonly<Record<string, string>> }
+  | { readonly _tag: "Off" }
+
+export const parseHeaders = (raw: string): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    raw
+      .split(",")
+      .map((pair) => pair.split("="))
+      .filter((parts) => parts.length >= 2 && parts[0]!.trim() !== "")
+      .map(([key, ...value]) => [key!.trim(), value.join("=").trim()])
+  )
+
+export const observability = (
+  baseUrl: string,
+  headers: Readonly<Record<string, string>>,
+  resource: { readonly serviceVersion: string; readonly attributes: Record<string, unknown> }
+) =>
+  Otlp.layer({
+    baseUrl,
+    headers,
+    resource: { serviceName: "forkyard", serviceVersion: resource.serviceVersion, attributes: resource.attributes },
+    loggerMergeWithExisting: true,
+    loggerExportInterval: "1 second",
+    tracerExportInterval: "1 second",
+    metricsExportInterval: "5 seconds"
+  }).pipe(Layer.provide(OtlpSerialization.layerJson), Layer.provide(FetchHttpClient.layer))

@@ -125,7 +125,11 @@ export class Supervisor extends Context.Service<
     readonly infraAction: (id: WorktreeId, infra: InfraName, action: string) => Effect.Effect<string, InfraError>
   }
 >()("forkyard/Supervisor") {
-  static readonly layer = (options: { readonly startupConcurrency: number; readonly otlpUrl: string }) =>
+  static readonly layer = (options: {
+    readonly startupConcurrency: number
+    readonly otlpUrl: string | undefined
+    readonly otlpHeaders: string
+  }) =>
     Layer.effect(
       Supervisor,
       Effect.gen(function* () {
@@ -180,6 +184,14 @@ export class Supervisor extends Context.Service<
               Effect.asVoid,
               Effect.withSpan("Supervisor.waitHealthy", { attributes: { "server.port": port, "url.path": path } })
             )
+
+        const waitRouted = (base: string, path: string) =>
+          http.get(`${base}${path}`).pipe(
+            Effect.retry(Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "10 seconds" }))),
+            Effect.asVoid,
+            Effect.catch(() => Effect.logWarning(`${base} is healthy but not reachable through the proxy yet`)),
+            Effect.withSpan("Supervisor.waitRouted", { attributes: { "url.full": `${base}${path}` } })
+          )
 
         const restartRequested = Effect.fnUntraced(function* (worktree: Worktree, service: ServiceNode) {
           const subscription = yield* PubSub.subscribe(restarts)
@@ -280,7 +292,7 @@ export class Supervisor extends Context.Service<
         const resolveEnv = (worktree: Worktree, service: ServiceNode, ownedEnv: OwnedEnv, port: Port | undefined) =>
           env.resolve(worktree, service, {
             ...ownedEnv,
-            ...daemonEnv(worktree, service, port, { otlpUrl: options.otlpUrl, basePath })
+            ...daemonEnv(worktree, service, port, { otlpUrl: options.otlpUrl, otlpHeaders: options.otlpHeaders, basePath })
           })
 
         const allocateNamedPorts = (service: ServiceNode) =>
@@ -312,6 +324,7 @@ export class Supervisor extends Context.Service<
 
           if (port) yield* router.expose({ host: hostOf(worktree, service.name), port })
           yield* awaitReadiness(service, spawned, port)
+          if (port && service.exposure._tag === "Routed") yield* waitRouted(urlOf(worktree, service.name), service.exposure.health)
 
           return spawned
         })

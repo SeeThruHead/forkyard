@@ -1,8 +1,11 @@
 import { NodeRuntime } from "@effect/platform-node"
+import { lookup } from "node:dns/promises"
+import { access, constants } from "node:fs/promises"
 import { supplyConfigImports } from "./ConfigImports.ts"
+import { parseHeaders, type TelemetryTarget } from "./Telemetry.ts"
 import { Upgrade } from "./Upgrade.ts"
 import { dashboardDir, defaultHome, packageVersion } from "./Package.ts"
-import { Config, Effect, FileSystem, Layer, Path } from "effect"
+import { Config, Effect, FileSystem, Layer, Option, Path } from "effect"
 import { availableParallelism } from "node:os"
 import * as Daemon from "./Daemon.ts"
 import { Port } from "./Ids.ts"
@@ -16,7 +19,12 @@ const settings = Config.all({
   maplePort: Config.Port("FORKYARD_MAPLE_PORT").pipe(Config.withDefault(14418)),
   startupConcurrency: Config.Int("FORKYARD_STARTUP_CONCURRENCY").pipe(Config.withDefault(availableParallelism())),
   supervised: Config.Boolean("FORKYARD_SUPERVISED").pipe(Config.withDefault(false)),
-  upstreamHost: Config.String("FORKYARD_UPSTREAM_HOST").pipe(Config.withDefault("host.docker.internal")),
+  upstreamHost: Config.String("FORKYARD_UPSTREAM_HOST").pipe(Config.option),
+  proxyMode: Config.Literals(["docker", "binary"], "FORKYARD_PROXY").pipe(Config.withDefault("docker" as const)),
+  telemetry: Config.Boolean("FORKYARD_TELEMETRY").pipe(Config.withDefault(true)),
+  otlpUrl: Config.String("FORKYARD_OTLP_URL").pipe(Config.option),
+  otlpHeaders: Config.String("FORKYARD_OTLP_HEADERS").pipe(Config.withDefault("")),
+  hostsFile: Config.String("FORKYARD_HOSTS_FILE").pipe(Config.option),
   dashboardDir: Config.String("FORKYARD_DASHBOARD_DIR").pipe(Config.withDefault(dashboardDir))
 })
 
@@ -35,11 +43,41 @@ const prepareHome = Effect.fn("prepareHome")(function* (home: string) {
   yield* fs.remove(path.join(home, "forkyard.sock"), { force: true })
 })
 
-const optionsFor = (home: string, path: Path.Path, config: Settings): Daemon.DaemonOptions => ({
+const localhostResolves = Effect.tryPromise(() => lookup("forkyard-probe.localhost")).pipe(
+  Effect.as(true),
+  Effect.orElseSucceed(() => false)
+)
+
+const writable = (file: string) =>
+  Effect.tryPromise(() => access(file, constants.W_OK)).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false)
+  )
+
+const chooseHostsFile = Effect.fn("chooseHostsFile")(function* (configured: Option.Option<string>) {
+  if (Option.isSome(configured)) return configured.value
+  if (yield* localhostResolves) return undefined
+  if (yield* writable("/etc/hosts")) return "/etc/hosts"
+  yield* Effect.logWarning(
+    "names under .localhost do not resolve here and /etc/hosts is not writable: services that call each other by their forkyard URLs will fail"
+  )
+  return undefined
+})
+
+const telemetryTarget = (config: Settings): TelemetryTarget => {
+  if (!config.telemetry) return { _tag: "Off" }
+  if (Option.isSome(config.otlpUrl)) return { _tag: "Remote", url: config.otlpUrl.value, headers: parseHeaders(config.otlpHeaders) }
+  return { _tag: "Local" }
+}
+
+const optionsFor = (home: string, path: Path.Path, config: Settings, hostsFile: string | undefined): Daemon.DaemonOptions => ({
+  hostsFile,
   socket: path.join(home, "forkyard.sock"),
   stateFile: path.join(home, "forkyard.sqlite"),
   traefikDir: path.join(home, "traefik"),
-  upstreamHost: config.upstreamHost,
+  upstreamHost: Option.getOrElse(config.upstreamHost, () => (config.proxyMode === "binary" ? "127.0.0.1" : "host.docker.internal")),
+  proxyMode: config.proxyMode,
+  telemetry: telemetryTarget(config),
   proxyPort: Port.make(config.proxyPort),
   httpPort: Port.make(config.httpPort),
   maplePort: Port.make(config.maplePort),
@@ -61,7 +99,7 @@ export const runDaemon = Effect.fn("runDaemon")(function* (home: string) {
   yield* prepareHome(home)
 
   const upgrade = Upgrade.layer({ supervised: config.supervised })
-  const daemon = Daemon.layer(optionsFor(home, path, config)).pipe(Layer.provideMerge(upgrade))
+  const daemon = Daemon.layer(optionsFor(home, path, config, yield* chooseHostsFile(config.hostsFile))).pipe(Layer.provideMerge(upgrade))
 
   yield* Effect.scoped(
     Layer.build(daemon).pipe(
