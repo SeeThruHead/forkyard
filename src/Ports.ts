@@ -17,3 +17,10 @@ export const allocatePort = Effect.callback<Port, PortError>((resume) => {
     server.close(() => resume(Port.makeEffect(port).pipe(Effect.mapError(() => new PortError({ message: `no port allocated (${port})` })))))
   })
 })
+
+export const takenOnLoopback = (port: number) =>
+  Effect.callback<boolean>((resume) => {
+    const server = createServer()
+    server.once("error", (error: NodeJS.ErrnoException) => resume(Effect.succeed(error.code === "EADDRINUSE")))
+    server.listen(port, "127.0.0.1", () => server.close(() => resume(Effect.succeed(false))))
+  })

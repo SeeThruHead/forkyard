@@ -44,6 +44,9 @@ export const readyOrExit = Effect.fn("Shared.readyOrExit")(function* <A, E, R>(
 export const fetchOk = (url: string) =>
   Effect.tryPromise(() => fetch(url).then((response) => (response.ok ? response : Promise.reject(new Error(`${response.status}`)))))
 
+export const removeContainer = (tools: InfraTools, name: string) =>
+  tools.exec({ name: "docker rm", run: cmd("docker", "rm", "-f", name), env: {}, cwd: "/" }).pipe(Effect.scoped, Effect.ignore)
+
 export const dockerContainer = Effect.fn("Shared.dockerContainer")(function* (
   tools: InfraTools,
   options: { readonly infra: string; readonly name: string; readonly args: ReadonlyArray<string>; readonly env?: Env }
