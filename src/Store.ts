@@ -56,6 +56,10 @@ const migrations = Migrator.fromRecord({
       SELECT root, slug, desired, branch, stack_file FROM worktrees ORDER BY rowid`
     yield* sql`DROP TABLE worktrees`
     yield* sql`ALTER TABLE worktrees_by_folder RENAME TO worktrees`
+  }),
+  "7_worktree_profile": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE worktrees ADD COLUMN profile TEXT NOT NULL DEFAULT 'default'`
   })
 })
 

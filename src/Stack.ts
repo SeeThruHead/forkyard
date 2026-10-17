@@ -16,6 +16,7 @@ export type Worktree = {
   readonly project: ProjectName
   readonly branch: BranchSlug
   readonly root: AbsolutePath
+  readonly profile: string
   readonly domain: string
   readonly proxyPort: Port
 }
@@ -293,11 +294,21 @@ export const cmd = (command: string, ...args: ReadonlyArray<string>): Run => ({ 
 
 export type Stack = {
   readonly name: ProjectName
+  readonly profiles: ReadonlyArray<string>
   readonly build: (worktree: Worktree) => Effect.Effect<ReadonlyArray<Node>, ConfigError>
 }
 
-export const make = (name: string, program: Effect.Effect<unknown, ConfigError, StackBuilder | CurrentWorktree>): Stack => ({
+export const defaultProfile = "default"
+
+export const profile = CurrentWorktree.useSync((worktree) => worktree.profile)
+
+export const make = (
+  name: string,
+  program: Effect.Effect<unknown, ConfigError, StackBuilder | CurrentWorktree>,
+  options: { readonly profiles?: ReadonlyArray<string> } = {}
+): Stack => ({
   name: ProjectName.make(name),
+  profiles: [defaultProfile, ...(options.profiles ?? []).filter((name) => name !== defaultProfile)],
   build: Effect.fn("Stack.build")(function* (worktree: Worktree) {
     const nodes = yield* Ref.make<ReadonlyArray<Node>>([])
     const builder = StackBuilder.of({ add: (node) => Ref.update(nodes, (all) => [...all, node]) })

@@ -1,4 +1,4 @@
-import { Env, Infra, logLine, make, Nats, node, Postgres, Process, Redis, Service, Temporal, url, watch } from "forkyard"
+import { Env, Infra, logLine, make, Nats, node, Postgres, Process, profile, Redis, Service, Temporal, url, watch } from "forkyard"
 import { Effect } from "effect"
 
 const schema = (file: string) => [Env.varlock({ schema: file })]
@@ -78,6 +78,8 @@ export default make(
         provides: (tool) => ({ CATALOG_URL: tool.url })
       })
     )
+    const lean = (yield* profile) === "lean"
+
     const flags = yield* Infra(
       Process.infra({
         name: "flags",
@@ -88,27 +90,30 @@ export default make(
         provides: (tool) => ({ FLAGS_BASE_URL: tool.routedUrl, FLAGS_STREAM_URL: tool.routedUrl, FLAGS_EVENTS_URL: tool.routedUrl })
       })
     )
-    yield* Infra(
-      Process.infra({
-        name: "schema-viewer",
-        scope: "shared",
-        uses: [postgresSpec],
-        run: "pnpm --filter @northwind/schema-viewer run dev",
-        port: "SCHEMA_VIEWER_PORT"
-      })
-    )
-    yield* Infra(
-      Process.infra({ name: "log-viewer", scope: "shared", run: "pnpm --filter @northwind/log-viewer run dev", port: "LOG_VIEWER_PORT" })
-    )
-    yield* Infra(
-      Process.infra({
-        name: "dev-home",
-        scope: "shared",
-        run: "pnpm --filter @northwind/dev-home run dev",
-        port: "DEV_HOME_PORT",
-        health: "/"
-      })
-    )
+    if (!lean)
+      yield* Infra(
+        Process.infra({
+          name: "schema-viewer",
+          scope: "shared",
+          uses: [postgresSpec],
+          run: "pnpm --filter @northwind/schema-viewer run dev",
+          port: "SCHEMA_VIEWER_PORT"
+        })
+      )
+    if (!lean)
+      yield* Infra(
+        Process.infra({ name: "log-viewer", scope: "shared", run: "pnpm --filter @northwind/log-viewer run dev", port: "LOG_VIEWER_PORT" })
+      )
+    if (!lean)
+      yield* Infra(
+        Process.infra({
+          name: "dev-home",
+          scope: "shared",
+          run: "pnpm --filter @northwind/dev-home run dev",
+          port: "DEV_HOME_PORT",
+          health: "/"
+        })
+      )
 
     const coreApiUrl = yield* url("core-api")
     const portalUrl = yield* url("portal")
@@ -232,11 +237,12 @@ export default make(
       uses: [mailpit],
       watch: watch("apps/mail-shim/src/**")
     })
-    yield* Service.http("fake-kyc", {
-      run: "pnpm --filter @northwind/fake-kyc run dev",
-      env: { API_URL: coreApiUrl },
-      watch: watch("apps/fake-kyc/src/**")
-    })
+    if (!lean)
+      yield* Service.http("fake-kyc", {
+        run: "pnpm --filter @northwind/fake-kyc run dev",
+        env: { API_URL: coreApiUrl },
+        watch: watch("apps/fake-kyc/src/**")
+      })
     const auth = yield* Service.http("auth", {
       run: "pnpm --filter @northwind/auth run dev",
       uses: [redis],
@@ -280,5 +286,6 @@ export default make(
       envFrom: schema("env/.env.backoffice.schema"),
       env: { REACT_APP_API_URL: coreApiUrl, GRAPH_API_URL: yield* url("graph"), BILLING_API_URL: yield* url("billing-api") }
     })
-  })
+  }),
+  { profiles: ["lean"] }
 )

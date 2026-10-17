@@ -16,6 +16,7 @@ export const DesiredWorktree = Schema.Struct({
   slug: Schema.String,
   root: AbsolutePath,
   branch: Schema.String,
+  profile: Schema.String,
   stack_file: AbsolutePath
 })
 export type DesiredWorktree = typeof DesiredWorktree.Type
@@ -128,7 +129,7 @@ export class Registry extends Context.Service<
 
       const markDown = (id: WorktreeId) => sql`UPDATE worktrees SET desired = 'down' WHERE slug = ${id}`.pipe(Effect.asVoid, Effect.orDie)
 
-      const desiredUp = sql`SELECT slug, root, branch, stack_file FROM worktrees WHERE desired = 'up'`.pipe(
+      const desiredUp = sql`SELECT slug, root, branch, profile, stack_file FROM worktrees WHERE desired = 'up'`.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(DesiredWorktree))),
         Effect.orDie
       )

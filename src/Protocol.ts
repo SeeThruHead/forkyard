@@ -11,7 +11,12 @@ const InWorktree = { id: WorktreeId }
 
 export class ForkyardRpcs extends RpcGroup.make(
   Rpc.make("Up", {
-    payload: { root: AbsolutePath, branch: Schema.String, stackFile: Schema.optional(AbsolutePath) },
+    payload: {
+      root: AbsolutePath,
+      branch: Schema.String,
+      profile: Schema.optional(Schema.String),
+      stackFile: Schema.optional(AbsolutePath)
+    },
     success: Schema.Struct({ id: WorktreeId }),
     error: ForkyardError
   }),

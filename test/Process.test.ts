@@ -8,6 +8,7 @@ const worktree: Worktree = {
   project: ProjectName.make("app"),
   branch: BranchSlug.make("main"),
   root: AbsolutePath.make("/repo"),
+  profile: "default",
   domain: "main.app.localhost",
   proxyPort: Port.make(80)
 }

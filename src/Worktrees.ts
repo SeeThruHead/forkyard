@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, FiberMap, Latch, Layer, Metric, Option } from "effect"
+import { Clock, Context, Effect, FiberMap, Latch, Layer, Metric, Option, Schema } from "effect"
 import { type AbsolutePath, branchSlug, type Port, type WorktreeId, worktreeId } from "./Ids.ts"
 import * as Metrics from "./Metrics.ts"
 import { ForkyardError } from "./Protocol.ts"
@@ -10,17 +10,28 @@ import { Supervisor } from "./Supervisor.ts"
 export type UpRequest = {
   readonly root: AbsolutePath
   readonly branch: string
+  readonly profile: string
   readonly stackFile: AbsolutePath
 }
+
+const StackExport = Schema.Struct({
+  name: Schema.String,
+  profiles: Schema.Array(Schema.String),
+  build: Schema.declare((value): value is (...args: ReadonlyArray<never>) => unknown => typeof value === "function")
+})
 
 const loadStack = Effect.fn("Worktrees.loadStack")(function* (stackFile: AbsolutePath) {
   yield* Effect.annotateCurrentSpan({ "forkyard.stack_file": stackFile })
   const version = yield* Clock.currentTimeMillis
 
-  return yield* Effect.tryPromise({
-    try: () => import(`${stackFile}?t=${version}`).then((module: { readonly default: Stack }) => module.default),
+  const exported = yield* Effect.tryPromise({
+    try: () => import(`${stackFile}?t=${version}`).then((module: { readonly default?: unknown }) => module.default),
     catch: (cause) => new ForkyardError({ message: `cannot load ${stackFile}: ${String(cause)}` })
   })
+  return yield* Schema.decodeUnknownEffect(StackExport)(exported).pipe(
+    Effect.as(exported as Stack),
+    Effect.mapError(() => new ForkyardError({ message: `${stackFile} must \`export default make("name", ...)\` from forkyard` }))
+  )
 })
 
 export class Worktrees extends Context.Service<
@@ -57,6 +68,7 @@ export class Worktrees extends Context.Service<
             project: stack.name,
             branch: name,
             root: request.root,
+            profile: request.profile,
             domain: `${id}.${options.domain}`,
             proxyPort: options.proxyPort
           } satisfies Worktree
@@ -66,6 +78,7 @@ export class Worktrees extends Context.Service<
           slug: worktree.id,
           root: request.root,
           branch: request.branch,
+          profile: request.profile,
           stack_file: request.stackFile
         })
 
@@ -87,16 +100,32 @@ export class Worktrees extends Context.Service<
           })
         })
 
+        const refuseUnknownProfile = (stack: Stack, profile: string) => {
+          if (stack.profiles.includes(profile)) return Effect.void
+          return Effect.fail(
+            new ForkyardError({ message: `${stack.name} has no profile "${profile}" (profiles: ${stack.profiles.join(", ")})` })
+          )
+        }
+
         const up = Effect.fn("Worktrees.up")(function* (request: UpRequest) {
           yield* Effect.annotateCurrentSpan({ "forkyard.root": request.root, "forkyard.branch": request.branch })
 
           const stack = yield* loadStack(request.stackFile)
           const worktree = yield* worktreeFor(stack, request)
           yield* refuseNameTakenElsewhere(worktree)
+          yield* refuseUnknownProfile(stack, request.profile)
           yield* registry.markUp(desired(worktree, request))
-          if (yield* FiberMap.has(running, worktree.id)) return worktree.id
+          const current = (yield* status.snapshot)[worktree.id]
+          if (current?.profile === worktree.profile && (yield* FiberMap.has(running, worktree.id))) return worktree.id
+          yield* FiberMap.remove(running, worktree.id)
 
-          yield* status.register({ id: worktree.id, project: worktree.project, branch: worktree.branch, root: worktree.root })
+          yield* status.register({
+            id: worktree.id,
+            project: worktree.project,
+            branch: worktree.branch,
+            root: worktree.root,
+            profile: worktree.profile
+          })
           yield* launch(stack, worktree)
           yield* recordRunning
 
@@ -113,10 +142,14 @@ export class Worktrees extends Context.Service<
 
         const restore = registry.desiredUp.pipe(
           Effect.flatMap((rows) =>
-            Effect.forEach(rows, (row) => up({ root: row.root, branch: row.branch, stackFile: row.stack_file }).pipe(Effect.ignore), {
-              concurrency: "unbounded",
-              discard: true
-            })
+            Effect.forEach(
+              rows,
+              (row) => up({ root: row.root, branch: row.branch, profile: row.profile, stackFile: row.stack_file }).pipe(Effect.ignore),
+              {
+                concurrency: "unbounded",
+                discard: true
+              }
+            )
           )
         )
 

@@ -103,11 +103,13 @@ const awaitSettled = (id: WorktreeId) =>
     )
   )
 
-const up = Command.make("up", { branch: branchFlag }, ({ branch }) =>
+const profileFlag = Flag.String("profile").pipe(Flag.withDefault("default"), Flag.withDescription("Profile from forkyard.config.ts"))
+
+const up = Command.make("up", { branch: branchFlag, profile: profileFlag }, ({ branch, profile }) =>
   Effect.gen(function* () {
     const forkyard = yield* ForkyardClient
     const request = yield* target(branch)
-    const { id } = yield* forkyard.Up(request)
+    const { id } = yield* forkyard.Up({ ...request, profile })
     yield* Console.log(`${id} starting from ${request.root}`)
 
     const settled = yield* awaitSettled(id)

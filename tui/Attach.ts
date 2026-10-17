@@ -3,14 +3,18 @@ import { type Context, Effect, Fiber } from "effect"
 import { createElement as h, useEffect, useReducer, useState } from "react"
 import { spawn } from "node:child_process"
 import { ForkyardClient } from "../src/Client.ts"
-import { ServiceName, type WorktreeId } from "../src/Ids.ts"
+import { type AbsolutePath, ServiceName, type WorktreeId } from "../src/Ids.ts"
 import type { EnvVar, Snapshot, UsageMap } from "../src/Model.ts"
 import { daemonFeed, emptyLogs, type Line, logsReducer, statusFeed, usageFeed, worktreeLogFeed } from "./Feeds.ts"
 import { Home } from "./Home.ts"
 import { useMouseMode } from "./Mouse.ts"
+import { NotRunning } from "./NotRunning.ts"
 import { Worktree } from "./Worktree.ts"
 
-type View = { readonly _tag: "Home" } | { readonly _tag: "Worktree"; readonly id: WorktreeId }
+export type View =
+  | { readonly _tag: "Home" }
+  | { readonly _tag: "Worktree"; readonly id: WorktreeId }
+  | { readonly _tag: "Checkout"; readonly root: AbsolutePath; readonly branch: string }
 
 const keepDaemon = 2000
 
@@ -87,6 +91,25 @@ const App = ({ context, initial }: AppProps) => {
       call(ForkyardClient.use((forkyard) => forkyard.Env({ id, service: ServiceName.make(service) })))
 
   const worktree = worktreeId ? snapshot[worktreeId] : undefined
+  const checkoutRoot = view._tag === "Checkout" ? view.root : undefined
+  const started = Object.values(snapshot).find((other) => other.root === checkoutRoot)
+
+  useEffect(() => {
+    if (started) setView({ _tag: "Worktree", id: started.id })
+  }, [started?.id])
+
+  const start = (root: AbsolutePath, branch: string) =>
+    call(ForkyardClient.use((forkyard) => forkyard.Up({ root, branch }))).then(({ id }) => setView({ _tag: "Worktree", id }))
+
+  if (view._tag === "Checkout")
+    return h(NotRunning, {
+      root: view.root,
+      branch: view.branch,
+      rows,
+      onStart: () => start(view.root, view.branch),
+      onBack: () => setView({ _tag: "Home" }),
+      onQuit: exit
+    })
 
   if (worktreeId && worktree)
     return h(Worktree, {
@@ -117,9 +140,9 @@ const App = ({ context, initial }: AppProps) => {
   })
 }
 
-export const attach = (context: Context.Context<ForkyardClient>, initial: WorktreeId | undefined) =>
+export const attach = (context: Context.Context<ForkyardClient>, initial: View) =>
   Effect.promise(() =>
-    render(h(App, { context, initial: initial ? { _tag: "Worktree", id: initial } : { _tag: "Home" } }), {
+    render(h(App, { context, initial }), {
       exitOnCtrlC: false
     }).waitUntilExit()
   )

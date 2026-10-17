@@ -41,6 +41,7 @@ export const WorktreeView = Schema.Struct({
   project: ProjectName,
   branch: BranchSlug,
   root: AbsolutePath,
+  profile: Schema.String,
   services: Schema.Record(ServiceName, ServiceView),
   infra: Schema.Record(InfraName, InfraView)
 })

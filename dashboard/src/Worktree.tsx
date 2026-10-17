@@ -374,6 +374,7 @@ export const WorktreePage = ({
           </span>
           <span className="sep">›</span>
           <span className="branch-name">{worktree.branch}</span>
+          {worktree.profile === "default" ? null : <span className="c-Restarting">profile {worktree.profile}</span>}
         </span>
         <span className="dim">
           branch {at + 1} of {ids.length} in {worktree.project}

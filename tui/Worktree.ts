@@ -291,6 +291,7 @@ export const Worktree = ({
       h(Text, { bold: true, color: keyColor(worktree.project) }, worktree.project),
       h(Text, { color: theme.faint }, " › "),
       h(Text, { bold: true, color: "#ffffff" }, worktree.branch),
+      worktree.profile === "default" ? null : h(Text, { color: theme.restarting }, `  profile ${worktree.profile}`),
       h(Text, { color: theme.muted }, `  ${position}   ${worktree.root}`)
     ),
     h(

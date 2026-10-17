@@ -48,9 +48,14 @@ export const layer = ForkyardRpcs.toLayer(
     })
 
     return ForkyardRpcs.of({
-      Up: ({ root, branch, stackFile }) =>
+      Up: ({ root, branch, profile, stackFile }) =>
         worktrees
-          .up({ root, branch, stackFile: stackFile ?? AbsolutePath.make(path.join(root, "forkyard.config.ts")) })
+          .up({
+            root,
+            branch,
+            profile: profile ?? "default",
+            stackFile: stackFile ?? AbsolutePath.make(path.join(root, "forkyard.config.ts"))
+          })
           .pipe(Effect.map((id) => ({ id }))),
       Down: ({ id }) => worktrees.down(id),
       Status: () => status.changes,
