@@ -108,6 +108,11 @@ export class Worktrees extends Context.Service<
           })
         })
 
+        const stopOtherNamesFor = Effect.fn("Worktrees.stopOtherNamesFor")(function* (worktree: Worktree) {
+          const others = Object.values(yield* status.snapshot).filter((other) => other.root === worktree.root && other.id !== worktree.id)
+          yield* Effect.forEach(others, (other) => FiberMap.remove(running, other.id), { discard: true })
+        })
+
         const refuseUnknownProfile = (stack: Stack, profile: string) => {
           if (stack.profiles.includes(profile)) return Effect.void
           return Effect.fail(
@@ -122,6 +127,7 @@ export class Worktrees extends Context.Service<
           const worktree = yield* worktreeFor(stack, request)
           yield* refuseNameTakenElsewhere(worktree)
           yield* refuseUnknownProfile(stack, request.profile)
+          yield* stopOtherNamesFor(worktree)
           yield* registry.markUp(desired(worktree, request))
           const current = (yield* status.snapshot)[worktree.id]
           if (current?.profile === worktree.profile && (yield* FiberMap.has(running, worktree.id))) return worktree.id
