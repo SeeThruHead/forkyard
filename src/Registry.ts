@@ -1,5 +1,6 @@
 import { Clock, Context, Crypto, Effect, FileSystem, Layer, Schema, type Scope } from "effect"
 import { SqlClient } from "effect/sql"
+import { Os } from "./platform/Os.ts"
 import { uptime } from "node:os"
 import { AbsolutePath, BranchSlug, Pid, ProcessOwner, type ProjectName, type WorktreeId, worktreeId } from "./Ids.ts"
 
@@ -35,10 +36,6 @@ type Identity = { readonly daemonId: string; readonly bootMinute: number }
 
 const bootMinute = Clock.currentTimeMillis.pipe(Effect.map((now) => Math.round((now - uptime() * 1000) / 60_000)))
 
-const isAlive = (pid: Pid) => Effect.try({ try: () => process.kill(pid, 0), catch: () => false }).pipe(Effect.orElseSucceed(() => false))
-
-const killGroup = (pid: Pid) => Effect.try({ try: () => process.kill(-pid, "SIGKILL"), catch: () => false }).pipe(Effect.ignore)
-
 const fromThisBoot = (identity: Identity) => (row: ProcessRow) => Math.abs(row.boot_minute - identity.bootMinute) <= 1
 
 const fromAnotherDaemon = (identity: Identity) => (row: ProcessRow) => row.daemon_id !== identity.daemonId
@@ -63,6 +60,7 @@ export class Registry extends Context.Service<
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       const fs = yield* FileSystem.FileSystem
+      const os = yield* Os
       const crypto = yield* Crypto.Crypto
       const identity: Identity = { daemonId: yield* crypto.randomUUIDv4().pipe(Effect.orDie), bootMinute: yield* bootMinute }
 
@@ -75,9 +73,9 @@ export class Registry extends Context.Service<
         function* () {
           const rows = yield* previousProcesses
           const candidates = rows.filter(fromThisBoot(identity)).filter(fromAnotherDaemon(identity))
-          const alive = yield* Effect.filter(candidates, (row) => isAlive(row.pid))
+          const alive = yield* Effect.filter(candidates, (row) => os.isAlive(row.pid))
 
-          yield* Effect.forEach(alive, (row) => killGroup(row.pid), { discard: true })
+          yield* Effect.forEach(alive, (row) => os.killTree(row.pid), { discard: true })
           yield* sql`DELETE FROM processes`.pipe(Effect.orDie)
 
           yield* Effect.annotateCurrentSpan({ "forkyard.reaped": alive.length, "forkyard.stale_rows": rows.length - candidates.length })

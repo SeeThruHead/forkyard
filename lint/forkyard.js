@@ -36,6 +36,7 @@ const scopedProcesses = {
   create: (context) => ({
     ImportDeclaration: (node) => {
       if (fileIs(context, "src/Proc.ts")) return
+      if (fileIs(context, "src/platform/Os.ts")) return
       if (spawnerModules.includes(node.source.value))
         context.report({
           node,
@@ -60,9 +61,12 @@ const scopedProcesses = {
         node.object.type === "Identifier" &&
         node.object.name === "process" &&
         propertyName(node) === "kill" &&
-        !fileIs(context, "src/Registry.ts")
+        !fileIs(context, "src/platform/Os.ts")
       ) {
-        context.report({ node, message: "Only the Registry's reaper may signal processes. Close the process's scope instead." })
+        context.report({
+          node,
+          message: "Only the platform layer (src/platform/Os.ts) may signal processes. Close the process's scope instead."
+        })
       }
     }
   })

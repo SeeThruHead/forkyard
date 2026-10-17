@@ -3,6 +3,7 @@ import { type Context, Effect, Fiber } from "effect"
 import { createElement as h, useEffect, useReducer, useState } from "react"
 import { spawn } from "node:child_process"
 import { ForkyardClient } from "../src/Client.ts"
+import { openUrlCommand } from "../src/platform/Os.ts"
 import { type AbsolutePath, ServiceName, type WorktreeId } from "../src/Ids.ts"
 import type { EnvVar, Snapshot, UsageMap } from "../src/Model.ts"
 import { daemonFeed, emptyLogs, type Line, logsReducer, statusFeed, usageFeed, worktreeLogFeed } from "./Feeds.ts"
@@ -18,8 +19,10 @@ export type View =
 
 const keepDaemon = 2000
 
-const openUrl = (url: string) =>
-  spawn(process.platform === "darwin" ? "open" : "xdg-open", [url], { stdio: "ignore", detached: true }).unref()
+const openUrl = (url: string) => {
+  const command = openUrlCommand(url)
+  spawn(command.command, [...command.args], { stdio: "ignore", detached: true }).unref()
+}
 
 const useRows = () => {
   const stdout = useStdout().stdout as NodeJS.WriteStream

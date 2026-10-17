@@ -1,18 +1,11 @@
 import { Context, Effect, Layer, Schedule, Stream, SubscriptionRef } from "effect"
 import { runOf, type Snapshot, type UsageMap } from "./Model.ts"
-import { Proc } from "./Proc.ts"
+import { Os, type ProcessRow } from "./platform/Os.ts"
 import { Status } from "./Status.ts"
 
-type Row = { readonly pid: number; readonly ppid: number; readonly cpu: number; readonly rssKb: number }
+type Row = ProcessRow
 
 type Usage = { readonly cpu: number; readonly rssKb: number }
-
-export const parseProcessTable = (output: string): ReadonlyArray<Row> =>
-  output
-    .split("\n")
-    .map((line) => line.trim().split(/\s+/).map(Number))
-    .filter((parts) => parts.length === 4 && parts.every((part) => !Number.isNaN(part)))
-    .map(([pid, ppid, cpu, rssKb]) => ({ pid: pid!, ppid: ppid!, cpu: cpu!, rssKb: rssKb! }))
 
 const childrenOf = (rows: ReadonlyArray<Row>) =>
   rows.reduce<Readonly<Record<number, ReadonlyArray<Row>>>>((all, row) => ({ ...all, [row.ppid]: [...(all[row.ppid] ?? []), row] }), {})
@@ -49,13 +42,13 @@ export class ProcessUsage extends Context.Service<ProcessUsage, { readonly chang
   static readonly layer = Layer.effect(
     ProcessUsage,
     Effect.gen(function* () {
-      const proc = yield* Proc
+      const os = yield* Os
       const status = yield* Status
       const latest = yield* SubscriptionRef.make<UsageMap>({})
 
       const sample = Effect.gen(function* () {
         const pids = pidsOf(yield* status.snapshot)
-        const rows = parseProcessTable(yield* proc.processTable)
+        const rows = yield* os.processTable
         yield* SubscriptionRef.set(latest, usageOf(rows, pids))
       })
 

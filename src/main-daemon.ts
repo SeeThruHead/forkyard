@@ -3,6 +3,7 @@ import { lookup } from "node:dns/promises"
 import { access, constants } from "node:fs/promises"
 import { supplyConfigImports } from "./ConfigImports.ts"
 import { parseHeaders, type TelemetryTarget } from "./Telemetry.ts"
+import { Os } from "./platform/Os.ts"
 import { Upgrade } from "./Upgrade.ts"
 import { dashboardDir, defaultHome, packageVersion } from "./Package.ts"
 import { Config, Effect, FileSystem, Layer, Option, Path } from "effect"
@@ -38,9 +39,10 @@ const survivePipeClose = Effect.sync(() => {
 const prepareHome = Effect.fn("prepareHome")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
+  const os = yield* Os
 
   yield* fs.makeDirectory(path.join(home, "traefik"), { recursive: true })
-  yield* fs.remove(path.join(home, "forkyard.sock"), { force: true })
+  if (os.ipcIsFile) yield* fs.remove(os.ipcPath(home), { force: true })
 })
 
 const localhostResolves = Effect.tryPromise(() => lookup("forkyard-probe.localhost")).pipe(
@@ -55,20 +57,17 @@ const writable = (file: string) =>
   )
 
 const chooseHostsFile = Effect.fn("chooseHostsFile")(function* (configured: Option.Option<string>) {
+  const os = yield* Os
   if (Option.isSome(configured)) return configured.value
   if (yield* localhostResolves) return undefined
-  if (yield* writable("/etc/hosts")) return "/etc/hosts"
+  if (yield* writable(os.hostsFile)) return os.hostsFile
   yield* Effect.logWarning(
-    "names under .localhost do not resolve here and /etc/hosts is not writable: services that call each other by their forkyard URLs will fail"
+    `names under .localhost do not resolve here and ${os.hostsFile} is not writable: services that call each other by their forkyard URLs will fail`
   )
   return undefined
 })
 
-const defaultUpstream = (mode: "docker" | "binary") => {
-  if (mode === "binary") return "127.0.0.1"
-  if (process.platform === "linux") return "127.0.0.1"
-  return "host.docker.internal"
-}
+const defaultUpstream = (mode: "docker" | "binary", os: Os["Service"]) => (mode === "binary" ? "127.0.0.1" : os.dockerUpstream)
 
 const telemetryTarget = (config: Settings): TelemetryTarget => {
   if (!config.telemetry) return { _tag: "Off" }
@@ -76,12 +75,18 @@ const telemetryTarget = (config: Settings): TelemetryTarget => {
   return { _tag: "Local" }
 }
 
-const optionsFor = (home: string, path: Path.Path, config: Settings, hostsFile: string | undefined): Daemon.DaemonOptions => ({
+const optionsFor = (
+  home: string,
+  path: Path.Path,
+  os: Os["Service"],
+  config: Settings,
+  hostsFile: string | undefined
+): Daemon.DaemonOptions => ({
   hostsFile,
-  socket: path.join(home, "forkyard.sock"),
+  socket: os.ipcPath(home),
   stateFile: path.join(home, "forkyard.sqlite"),
   traefikDir: path.join(home, "traefik"),
-  upstreamHost: Option.getOrElse(config.upstreamHost, () => defaultUpstream(config.proxyMode)),
+  upstreamHost: Option.getOrElse(config.upstreamHost, () => defaultUpstream(config.proxyMode, os)),
   proxyMode: config.proxyMode,
   telemetry: telemetryTarget(config),
   proxyPort: Port.make(config.proxyPort),
@@ -93,9 +98,6 @@ const optionsFor = (home: string, path: Path.Path, config: Settings, hostsFile: 
   startupConcurrency: config.startupConcurrency
 })
 
-const restartInPlace = () =>
-  process.execve?.(process.execPath, [process.execPath, ...process.execArgv, ...process.argv.slice(1)], process.env)
-
 export const runDaemon = Effect.fn("runDaemon")(function* (home: string) {
   yield* Effect.sync(supplyConfigImports)
   const path = yield* Path.Path
@@ -105,14 +107,16 @@ export const runDaemon = Effect.fn("runDaemon")(function* (home: string) {
   yield* prepareHome(home)
 
   const upgrade = Upgrade.layer({ supervised: config.supervised })
-  const daemon = Daemon.layer(optionsFor(home, path, config, yield* chooseHostsFile(config.hostsFile))).pipe(Layer.provideMerge(upgrade))
+  const daemon = Daemon.layer(optionsFor(home, path, yield* Os, config, yield* chooseHostsFile(config.hostsFile))).pipe(
+    Layer.provideMerge(upgrade)
+  )
 
   yield* Effect.scoped(
     Layer.build(daemon).pipe(
       Effect.flatMap((services) => Upgrade.use((upgrade) => upgrade.restartRequested).pipe(Effect.provide(services)))
     )
   )
-  if (!config.supervised) yield* Effect.sync(restartInPlace)
+  if (!config.supervised) yield* Os.use((os) => os.restartInPlace)
 }, Effect.provide(Platform.layer))
 
 if (import.meta.main) runDaemon(process.argv[2] ?? defaultHome).pipe(NodeRuntime.runMain)

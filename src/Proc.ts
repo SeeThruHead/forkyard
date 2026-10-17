@@ -1,4 +1,5 @@
 import { NodeChildProcessSpawner } from "@effect/platform-node"
+import { isShell, Os } from "./platform/Os.ts"
 import { Clock, Context, Deferred, Effect, Layer, Logger, Metric, Schema, type Scope, Stream, type Tracer } from "effect"
 import { FetchHttpClient, type HttpClient } from "effect/http"
 import { OtlpExporter, OtlpLogger, OtlpSerialization } from "effect/observability"
@@ -46,7 +47,7 @@ type OutputLine = { readonly line: string; readonly iostream: "stdout" | "stderr
 
 type Handle = ChildProcessSpawner.ChildProcessHandle
 
-const commandLine = (run: Run) => [run.command.split("/").at(-1) ?? run.command, ...run.args].join(" ")
+const commandLine = (run: Run) => (isShell(run) ? run.shell : [run.command.split("/").at(-1) ?? run.command, ...run.args].join(" "))
 
 const lastLines = (text: string) => text.trim().split("\n").slice(-6).join("\n")
 
@@ -84,7 +85,6 @@ export class Proc extends Context.Service<
   {
     readonly spawn: (options: SpawnOptions) => Effect.Effect<Spawned, SpawnError, Scope.Scope>
     readonly exec: (options: SpawnOptions) => Effect.Effect<string, SpawnError, Scope.Scope>
-    readonly processTable: Effect.Effect<string>
   }
 >()("forkyard/Proc") {
   static readonly layer = (options: { readonly otlpUrl: string | undefined }) =>
@@ -92,24 +92,27 @@ export class Proc extends Context.Service<
       Proc,
       Effect.gen(function* () {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+        const os = yield* Os
         const registry = yield* Registry
         const runs = yield* Runs
         const status = yield* Status
         const exportContext = yield* Effect.context<OtlpExporter.Flusher | OtlpSerialization.OtlpSerialization | HttpClient.HttpClient>()
 
-        const launch = (spawn: SpawnOptions) =>
-          spawner
+        const launch = (spawn: SpawnOptions) => {
+          const command = os.commandFor(spawn.run)
+          return spawner
             .spawn(
-              ChildProcess.make(spawn.run.command, [...spawn.run.args], {
+              ChildProcess.make(command.command, [...command.args], {
                 cwd: spawn.cwd,
                 env: spawn.env,
                 extendEnv: true,
-                detached: true,
-                killSignal: "SIGTERM",
+                detached: os.spawnGroup.detached,
+                ...(os.spawnGroup.killSignal ? { killSignal: os.spawnGroup.killSignal } : {}),
                 forceKillAfter: "3 seconds"
               })
             )
             .pipe(Effect.mapError((error) => new SpawnError({ service: spawn.service, message: error.message })))
+        }
 
         const recordRun = Effect.fnUntraced(function* (spawn: SpawnOptions, pid: Pid) {
           yield* registry.track({ pid, owner: spawn.owner, service: spawn.service })
@@ -247,12 +250,6 @@ export class Proc extends Context.Service<
         const failedExec = (spawn: SpawnOptions, code: number, output: string) =>
           new SpawnError({ service: spawn.service, message: `${commandLine(spawn.run)} exited ${code}: ${lastLines(output)}` })
 
-        const processTable = spawner.string(ChildProcess.make("ps", ["-A", "-o", "pid=,ppid=,%cpu=,rss="])).pipe(
-          Effect.orElseSucceed(() => ""),
-          Effect.withSpan("Proc.processTable"),
-          Effect.withTracerEnabled(false)
-        )
-
         const exec = Effect.fn("Proc.exec")(function* (spawn: SpawnOptions) {
           yield* Effect.annotateCurrentSpan(processAttributes(spawn))
 
@@ -268,7 +265,7 @@ export class Proc extends Context.Service<
           return stdout
         })
 
-        return Proc.of({ spawn, exec, processTable })
+        return Proc.of({ spawn, exec })
       })
     ).pipe(
       Layer.provide(NodeChildProcessSpawner.layer),

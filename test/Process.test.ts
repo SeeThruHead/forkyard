@@ -41,11 +41,11 @@ describe("process model", () => {
     })
   )
 
-  it.effect("a command string runs through the shell exactly as written", () =>
+  it.effect("a command string stays a shell script until the platform runs it", () =>
     Effect.gen(function* () {
       const [node] = yield* declared(Service.task("seed", { run: "./scripts/seed.sh --fresh" }))
 
-      expect(node?._tag === "Service" ? node.run : undefined).toEqual({ command: "/bin/sh", args: ["-c", "./scripts/seed.sh --fresh"] })
+      expect(node?._tag === "Service" ? node.run : undefined).toEqual({ shell: "./scripts/seed.sh --fresh" })
     })
   )
 

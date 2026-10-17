@@ -21,10 +21,14 @@ export type Worktree = {
   readonly proxyPort: Port
 }
 
-export type Run = {
+export type Command = {
   readonly command: string
   readonly args: ReadonlyArray<string>
 }
+
+export type ShellScript = { readonly shell: string }
+
+export type Run = Command | ShellScript
 
 export type Env = Readonly<Record<string, string>>
 
@@ -162,7 +166,7 @@ type ProcessProps = CommonProps & {
   readonly watch?: Watch
 }
 
-export const shell = (command: string): Run => ({ command: "/bin/sh", args: ["-c", command] })
+export const shell = (script: string): Run => ({ shell: script })
 
 export const toRun = (run: string | Run): Run => (typeof run === "string" ? shell(run) : run)
 
@@ -270,17 +274,17 @@ type TsNodeOptions = {
 
 const flag = (enabled: boolean | undefined, name: string) => (enabled ? [name] : [])
 
-export const node = (file: string, options: NodeOptions = {}): Run => ({
+export const node = (file: string, options: NodeOptions = {}): Command => ({
   command: "node",
   args: [file, ...(options.args ?? [])]
 })
 
-export const bun = (file: string, options: BunOptions = {}): Run => ({
+export const bun = (file: string, options: BunOptions = {}): Command => ({
   command: "bun",
   args: [...flag(options.watch, "--watch"), file, ...(options.args ?? [])]
 })
 
-export const tsNode = (file: string, options: TsNodeOptions = {}): Run => ({
+export const tsNode = (file: string, options: TsNodeOptions = {}): Command => ({
   command: "ts-node",
   args: [
     ...flag(options.transpileOnly ?? true, "--transpile-only"),
@@ -290,7 +294,7 @@ export const tsNode = (file: string, options: TsNodeOptions = {}): Run => ({
   ]
 })
 
-export const cmd = (command: string, ...args: ReadonlyArray<string>): Run => ({ command, args })
+export const cmd = (command: string, ...args: ReadonlyArray<string>): Command => ({ command, args })
 
 export type Stack = {
   readonly name: ProjectName

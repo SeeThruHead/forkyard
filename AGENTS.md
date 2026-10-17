@@ -12,7 +12,7 @@ Never add AI or agent attribution to anything in this repository: no co-author t
 
 `pnpm run lint` runs oxlint with the project rules in `lint/forkyard.js`:
 
-- `scoped-processes` (error): only `src/Proc.ts` may start processes (`node:child_process`, `effect/process`, `NodeServices`), only the Registry's reaper may call `process.kill`, and `Effect.run*` is not called inside the daemon: effects are composed and run once at the entry point.
+- `scoped-processes` (error): only `src/Proc.ts` and the platform layer (`src/platform/Os.ts`) may start processes (`node:child_process`, `effect/process`, `NodeServices`), only the platform layer may call `process.kill` (the Registry's reaper goes through it), and `Effect.run*` is not called inside the daemon: effects are composed and run once at the entry point.
 - `no-gen-wrapper` (warning): a named function that only returns `Effect.gen` is usually better as `Effect.fn` (named and traced) or `Effect.fnUntraced`.
 
 ## What reviewers check instead

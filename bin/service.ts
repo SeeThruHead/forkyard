@@ -1,14 +1,11 @@
-import { Console, Effect, FileSystem, Path } from "effect"
+import { Console, Effect, FileSystem, Path, type PlatformError } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { homedir } from "node:os"
 import { fromPackage, isSourceCheckout, packageRoot } from "../src/Package.ts"
+import { osName } from "../src/platform/Os.ts"
 
 const label = "dev.forkyard.daemon"
 const trayCask = "forkyard-bar"
-
-type Platform = "launchd" | "systemd"
-
-const platform = (): Platform => (process.platform === "darwin" ? "launchd" : "systemd")
 
 const launchdTarget = () => `gui/${process.getuid?.() ?? 0}`
 
@@ -88,62 +85,127 @@ const quietly = (command: string, ...args: ReadonlyArray<string>) =>
 
 const mustSucceed = (what: string) => (code: number) => (code === 0 ? Effect.void : Effect.fail(`${what} failed (exit ${code})`))
 
-export const isInstalled = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem
-  return yield* fs.exists(platform() === "launchd" ? plistPath() : unitPath()).pipe(Effect.orElseSucceed(() => false))
-})
+type ServiceManager = {
+  readonly definition: string
+  readonly install: (
+    home: string,
+    logFile: string
+  ) => Effect.Effect<
+    string,
+    string | PlatformError.PlatformError,
+    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+  >
+  readonly uninstall: Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner>
+  readonly restart: Effect.Effect<void, string, ChildProcessSpawner.ChildProcessSpawner>
+  readonly status: Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner>
+}
+
+const launchd: ServiceManager = {
+  definition: plistPath(),
+  install: Effect.fnUntraced(function* (_home, logFile) {
+    const fs = yield* FileSystem.FileSystem
+    const path = yield* Path.Path
+    yield* fs.makeDirectory(path.dirname(plistPath()), { recursive: true })
+    yield* fs.writeFileString(plistPath(), plist(logFile))
+    yield* quietly("launchctl", "bootout", `${launchdTarget()}/${label}`)
+    yield* run("launchctl", "bootstrap", launchdTarget(), plistPath()).pipe(Effect.flatMap(mustSucceed("launchctl bootstrap")))
+    return `a launchd agent (${plistPath()}); it starts at login`
+  }),
+  uninstall: Effect.gen(function* () {
+    yield* quietly("launchctl", "bootout", `${launchdTarget()}/${label}`)
+    yield* FileSystem.FileSystem.use((fs) => fs.remove(plistPath(), { force: true }))
+  }),
+  restart: run("launchctl", "kickstart", "-k", `${launchdTarget()}/${label}`).pipe(Effect.flatMap(mustSucceed("launchctl kickstart"))),
+  status: run("launchctl", "print", `${launchdTarget()}/${label}`).pipe(Effect.asVoid)
+}
+
+const systemd: ServiceManager = {
+  definition: unitPath(),
+  install: Effect.fnUntraced(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const path = yield* Path.Path
+    yield* fs.makeDirectory(path.dirname(unitPath()), { recursive: true })
+    yield* fs.writeFileString(unitPath(), unit())
+    yield* run("systemctl", "--user", "daemon-reload").pipe(Effect.flatMap(mustSucceed("systemctl daemon-reload")))
+    yield* run("systemctl", "--user", "enable", "--now", "forkyard").pipe(
+      Effect.flatMap(mustSucceed("systemctl enable (on WSL, set systemd=true under [boot] in /etc/wsl.conf)"))
+    )
+    return `a systemd user service (${unitPath()}); run loginctl enable-linger to keep it running after logout`
+  }),
+  uninstall: Effect.gen(function* () {
+    yield* quietly("systemctl", "--user", "disable", "--now", "forkyard")
+    yield* FileSystem.FileSystem.use((fs) => fs.remove(unitPath(), { force: true }))
+    yield* quietly("systemctl", "--user", "daemon-reload")
+  }),
+  restart: run("systemctl", "--user", "restart", "forkyard").pipe(Effect.flatMap(mustSucceed("systemctl restart"))),
+  status: run("systemctl", "--user", "status", "--no-pager", "forkyard").pipe(Effect.asVoid)
+}
+
+const windowsScript = () => `${process.env.FORKYARD_HOME ?? `${homedir()}\\.forkyard`}\\forkyard-daemon.cmd`
+
+const cmdScript = (logFile: string) =>
+  [
+    "@echo off",
+    ...Object.entries(serviceEnv()).map(([key, value]) => `set "${key}=${value}"`),
+    ":run",
+    `${daemonCommand()
+      .map((part) => `"${part}"`)
+      .join(" ")} >> "${logFile}" 2>&1`,
+    "timeout /t 2 /nobreak > nul",
+    "goto run",
+    ""
+  ].join("\r\n")
+
+const taskScheduler: ServiceManager = {
+  definition: windowsScript(),
+  install: Effect.fnUntraced(function* (_home, logFile) {
+    const fs = yield* FileSystem.FileSystem
+    yield* fs.writeFileString(windowsScript(), cmdScript(logFile))
+    yield* run("schtasks", "/Create", "/TN", "forkyard", "/TR", `"${windowsScript()}"`, "/SC", "ONLOGON", "/F").pipe(
+      Effect.flatMap(mustSucceed("schtasks /Create"))
+    )
+    yield* run("schtasks", "/Run", "/TN", "forkyard").pipe(Effect.flatMap(mustSucceed("schtasks /Run")))
+    return `a Task Scheduler task that starts at logon and restarts the daemon when it exits (${windowsScript()})`
+  }),
+  uninstall: Effect.gen(function* () {
+    yield* quietly("schtasks", "/End", "/TN", "forkyard")
+    yield* quietly("schtasks", "/Delete", "/TN", "forkyard", "/F")
+    yield* FileSystem.FileSystem.use((fs) => fs.remove(windowsScript(), { force: true }))
+  }),
+  restart: quietly("schtasks", "/End", "/TN", "forkyard").pipe(
+    Effect.andThen(run("schtasks", "/Run", "/TN", "forkyard")),
+    Effect.flatMap(mustSucceed("schtasks /Run"))
+  ),
+  status: run("schtasks", "/Query", "/TN", "forkyard", "/V", "/FO", "LIST").pipe(Effect.asVoid)
+}
+
+const manager = (): ServiceManager => {
+  if (osName() === "darwin") return launchd
+  if (osName() === "windows") return taskScheduler
+  return systemd
+}
+
+export const isInstalled = FileSystem.FileSystem.use((fs) => fs.exists(manager().definition)).pipe(Effect.orElseSucceed(() => false))
 
 export const install = Effect.fn("service.install")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
   const logFile = path.join(home, "daemon.log")
   yield* fs.makeDirectory(home, { recursive: true })
-
-  if (platform() === "launchd") {
-    yield* fs.makeDirectory(path.dirname(plistPath()), { recursive: true })
-    yield* fs.writeFileString(plistPath(), plist(logFile))
-    yield* quietly("launchctl", "bootout", `${launchdTarget()}/${label}`)
-    yield* run("launchctl", "bootstrap", launchdTarget(), plistPath()).pipe(Effect.flatMap(mustSucceed("launchctl bootstrap")))
-    return yield* Console.log(`forkyard daemon installed as a launchd agent (${plistPath()}); it starts at login and logs to ${logFile}`)
-  }
-
-  yield* fs.makeDirectory(path.dirname(unitPath()), { recursive: true })
-  yield* fs.writeFileString(unitPath(), unit())
-  yield* run("systemctl", "--user", "daemon-reload").pipe(Effect.flatMap(mustSucceed("systemctl daemon-reload")))
-  yield* run("systemctl", "--user", "enable", "--now", "forkyard").pipe(
-    Effect.flatMap(mustSucceed("systemctl enable (on WSL, set systemd=true under [boot] in /etc/wsl.conf)"))
-  )
-  yield* Console.log(
-    `forkyard daemon installed as a systemd user service (${unitPath()}); run loginctl enable-linger to keep it running after logout`
-  )
+  const installed = yield* manager().install(home, logFile)
+  yield* Console.log(`forkyard daemon installed as ${installed}; it logs to ${logFile}`)
 })
 
-export const uninstall = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem
-  if (platform() === "launchd") {
-    yield* quietly("launchctl", "bootout", `${launchdTarget()}/${label}`)
-    yield* fs.remove(plistPath(), { force: true })
-    return yield* Console.log("forkyard daemon service removed")
-  }
-  yield* quietly("systemctl", "--user", "disable", "--now", "forkyard")
-  yield* fs.remove(unitPath(), { force: true })
-  yield* quietly("systemctl", "--user", "daemon-reload")
-  yield* Console.log("forkyard daemon service removed")
-})
+export const uninstall = manager().uninstall.pipe(Effect.andThen(Console.log("forkyard daemon service removed")))
 
 export const restart = Effect.gen(function* () {
   if (!(yield* isInstalled)) return yield* Effect.fail("the daemon is not installed as a service; restart it where you started it")
-  if (platform() === "launchd")
-    return yield* run("launchctl", "kickstart", "-k", `${launchdTarget()}/${label}`).pipe(
-      Effect.flatMap(mustSucceed("launchctl kickstart"))
-    )
-  return yield* run("systemctl", "--user", "restart", "forkyard").pipe(Effect.flatMap(mustSucceed("systemctl restart")))
+  return yield* manager().restart
 })
 
 export const status = Effect.gen(function* () {
   if (!(yield* isInstalled)) return yield* Console.log("not installed as a service")
-  if (platform() === "launchd") return yield* run("launchctl", "print", `${launchdTarget()}/${label}`).pipe(Effect.asVoid)
-  return yield* run("systemctl", "--user", "status", "--no-pager", "forkyard").pipe(Effect.asVoid)
+  return yield* manager().status
 })
 
 type InstallMethod = "source" | "brew" | "pnpm" | "npm"

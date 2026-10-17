@@ -1,6 +1,6 @@
 import { Effect, Option, Schema, type Scope } from "effect"
 import { parseEnv } from "node:util"
-import type { Env, Run } from "./Stack.ts"
+import type { Command, Env, Run } from "./Stack.ts"
 
 export class EnvError extends Schema.TaggedError<EnvError>()("EnvError", {
   source: Schema.String,
@@ -48,7 +48,7 @@ const VarlockOutput = Schema.Struct({
   config: Schema.Record(Schema.String, Schema.Struct({ value: Schema.optional(Schema.Unknown), isSensitive: Schema.Boolean }))
 })
 
-const varlockCommand = Effect.fnUntraced(function* (context: EnvLoadContext, root: string, run: Run | undefined) {
+const varlockCommand = Effect.fnUntraced(function* (context: EnvLoadContext, root: string, run: Command | undefined) {
   if (run) return run
 
   const local = `${root}/node_modules/.bin/varlock`
@@ -56,7 +56,7 @@ const varlockCommand = Effect.fnUntraced(function* (context: EnvLoadContext, roo
   return Option.isSome(installed) ? { command: local, args: [] } : { command: "pnpm", args: ["exec", "varlock"] }
 })
 
-export const varlock = (options: { readonly run?: Run; readonly path?: string; readonly schema?: string } = {}): EnvSource => ({
+export const varlock = (options: { readonly run?: Command; readonly path?: string; readonly schema?: string } = {}): EnvSource => ({
   label: options.schema ? `varlock ${options.schema}` : "varlock",
   load: Effect.fn("EnvSource.varlock")(function* (context: EnvLoadContext) {
     const root = options.path ? `${context.root}/${options.path}` : context.root

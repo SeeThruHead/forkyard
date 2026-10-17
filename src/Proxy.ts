@@ -3,6 +3,7 @@ import type { Port } from "./Ids.ts"
 import { dockerContainer, forkyardName } from "./infra/Shared.ts"
 import { toolsFor } from "./InfraManager.ts"
 import { Proc } from "./Proc.ts"
+import { Os } from "./platform/Os.ts"
 import { Router } from "./Router.ts"
 import { cmd } from "./Stack.ts"
 
@@ -11,9 +12,6 @@ const traefikArgs = (port: number, dynamicDir: string) => [
   `--providers.file.directory=${dynamicDir}`,
   "--providers.file.watch=true"
 ]
-
-const dockerNetworking = (port: number): ReadonlyArray<string> =>
-  process.platform === "linux" ? ["--network", "host"] : ["-p", `${port}:80`]
 
 export const layer = (options: {
   readonly mode: "docker" | "binary"
@@ -25,6 +23,8 @@ export const layer = (options: {
   Layer.effectDiscard(
     Effect.gen(function* () {
       const proc = yield* Proc
+      const os = yield* Os
+      const networking = os.dockerProxy(options.port)
       const router = yield* Router
       const path = yield* Path.Path
       yield* router.expose({ host: options.dashboardHost, port: options.dashboardPort })
@@ -36,11 +36,11 @@ export const layer = (options: {
         infra: "traefik",
         name: forkyardName("traefik", options.port),
         args: [
-          ...dockerNetworking(options.port),
+          ...networking.args,
           "-v",
           `${path.resolve(options.traefikDir)}:/etc/traefik/dynamic`,
           "traefik:v3",
-          ...traefikArgs(process.platform === "linux" ? options.port : 80, "/etc/traefik/dynamic")
+          ...traefikArgs(networking.listenPort(options.port), "/etc/traefik/dynamic")
         ]
       }).pipe(Effect.orDie)
     }).pipe(Effect.withSpan("Proxy.start", { attributes: { "server.port": options.port } }))
