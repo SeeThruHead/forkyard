@@ -1,15 +1,15 @@
 import { escape, html, listen, page, panel, readForm, redirect, table } from "@storefront/ui"
-import { createServer } from "node:http"
+import { createServer, type ServerResponse } from "node:http"
 
 const api = process.env.API_URL
 const branch = process.env.FORKYARD_BRANCH ?? "local"
 
-const get = async (path) => {
+const get = async (path: string) => {
   const response = await fetch(`${api}${path}`)
   return response.ok ? response.json() : undefined
 }
 
-const home = async (response) => {
+const home = async (response: ServerResponse) => {
   const [about, products, orders, giftCards] = await Promise.all([
     get("/api/info"),
     get("/api/products"),
@@ -19,10 +19,12 @@ const home = async (response) => {
   const giftCardSection = giftCards
     ? `<h2>Gift cards <span class="muted">(only on this branch)</span></h2>${table(
         ["Code", "Balance", "Status"],
-        giftCards.map((card) => [card.code, `$${card.balance}`, card.status])
+        giftCards.map((card: Record<string, unknown>) => [card.code, `$${card.balance}`, card.status])
       )}`
     : ""
-  const options = products.map((product) => `<option value="${product.id}">${escape(product.name)}</option>`).join("")
+  const options = products
+    .map((product: Record<string, unknown>) => `<option value="${product.id}">${escape(product.name)}</option>`)
+    .join("")
   html(
     response,
     page({
@@ -41,12 +43,17 @@ const home = async (response) => {
       <form method="post" action="/orders"><select name="productId">${options}</select><input name="note" placeholder="A note, stored in this worktree's database"><button>Order</button></form>
       ${table(
         ["#", "Product", "Note", "Placed"],
-        orders.map((order) => [order.id, order.product, order.note, new Date(order.created_at).toLocaleTimeString()])
+        orders.map((order: Record<string, unknown>) => [
+          order.id,
+          order.product,
+          order.note,
+          new Date(String(order.created_at)).toLocaleTimeString()
+        ])
       )}
       ${giftCardSection}
       <h2>Products</h2>${table(
         ["SKU", "Product", "Price", "Stock"],
-        products.map((product) => [product.sku, product.name, `$${product.price}`, product.stock])
+        products.map((product: Record<string, unknown>) => [product.sku, product.name, `$${product.price}`, product.stock])
       )}
       <p class="muted">Server-rendered by the shop; every value above came from the api at <code>${escape(api)}</code>.</p>`
     })
@@ -64,9 +71,10 @@ listen(
       }
       return await home(response)
     } catch (error) {
+      const message = (error as Error).message
       console.error(error)
       response.writeHead(502, { "content-type": "text/plain" })
-      response.end(`shop could not reach the api at ${api}: ${error.message}`)
+      response.end(`shop could not reach the api at ${api}: ${message}`)
     }
   }),
   "shop"

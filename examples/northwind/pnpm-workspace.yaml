@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - packages/*
+  - tools/*
+
+onlyBuiltDependencies:
+  - "@swc/core"
+  - esbuild
+  - msgpackr-extract
+
+ignoredBuiltDependencies:
+  - protobufjs

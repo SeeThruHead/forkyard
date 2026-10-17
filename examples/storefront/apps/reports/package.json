@@ -1,0 +1,14 @@
+{
+  "name": "@storefront/reports",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/main.ts",
+    "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
+    "effect": "4.0.5"
+  }
+}

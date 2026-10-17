@@ -1,6 +1,10 @@
 {
   "name": "@shortly/worker",
   "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun worker.ts"
+  },
   "dependencies": {
     "@shortly/shared": "workspace:*"
   }

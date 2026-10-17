@@ -1,0 +1,11 @@
+{
+  "name": "@northwind/auth",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/server.ts"
+  },
+  "dependencies": {
+    "@northwind/kit": "workspace:*"
+  }
+}

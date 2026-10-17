@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sign in to Northwind</title>
+    <style>
+      body {
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+        margin: 24px;
+        color: #111;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 12px;
+      }
+      td,
+      th {
+        border-bottom: 1px solid #ddd;
+        padding: 6px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+      code {
+        font-size: 12px;
+      }
+      section {
+        margin-top: 22px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Sign in <span id="branch"></span></h1>
+    <form id="login"><input name="email" value="ada@example.com" /> <button>Sign in</button></form>
+    <p>Auth backend: <code id="origin"></code></p>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

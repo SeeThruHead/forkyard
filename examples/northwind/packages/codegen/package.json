@@ -1,0 +1,11 @@
+{
+  "name": "@northwind/codegen",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "codegen": "node codegen.ts"
+  },
+  "dependencies": {
+    "pg": "^8.16.0"
+  }
+}

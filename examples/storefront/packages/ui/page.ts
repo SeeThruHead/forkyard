@@ -1,6 +1,8 @@
-const hue = (text) => [...text].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 360, 7)
+import type { IncomingMessage, Server, ServerResponse } from "node:http"
 
-export const escape = (value) =>
+const hue = (text: string) => [...text].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 360, 7)
+
+export const escape = (value: unknown) =>
   String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -23,45 +25,57 @@ button{background:var(--accent);color:#fff;border:0;border-radius:4px;padding:7p
 .muted{color:var(--muted)}.empty{color:var(--muted);font-style:italic}
 `
 
-export const page = ({ app, title, branch, body }) => `<!doctype html>
+export const page = ({
+  app,
+  title,
+  branch,
+  body
+}: {
+  readonly app: string
+  readonly title: string
+  readonly branch: string
+  readonly body: string
+}) => `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escape(title)} (${escape(branch)})</title><style>${css}</style></head>
 <body><header><strong>Storefront</strong><span class="app">${escape(app)}</span>
 <span class="branch" style="background:hsl(${hue(branch)} 62% 34%)">${escape(branch)}</span></header>
 <main>${body}</main></body></html>`
 
-export const panel = (rows) =>
+export const panel = (rows: ReadonlyArray<readonly [string, unknown]>) =>
   `<div class="panel"><dl>${rows.map(([label, value]) => `<dt>${escape(label)}</dt><dd><code>${escape(value)}</code></dd>`).join("")}</dl></div>`
 
-export const table = (columns, rows) =>
+export const table = (columns: ReadonlyArray<string>, rows: ReadonlyArray<ReadonlyArray<unknown>>) =>
   rows.length === 0
     ? `<p class="empty">Nothing yet.</p>`
     : `<table><tr>${columns.map((column) => `<th>${escape(column)}</th>`).join("")}</tr>${rows
         .map((row) => `<tr>${row.map((cell) => `<td>${escape(cell)}</td>`).join("")}</tr>`)
         .join("")}</table>`
 
-export const readForm = async (request) => Object.fromEntries(new URLSearchParams(Buffer.concat(await request.toArray()).toString()))
+export const readForm = async (request: IncomingMessage): Promise<Record<string, string>> =>
+  Object.fromEntries(new URLSearchParams(Buffer.concat((await request.toArray()) as Array<Buffer>).toString()))
 
-export const readJson = async (request) => {
-  const text = Buffer.concat(await request.toArray()).toString()
+export const readJson = async (request: IncomingMessage): Promise<Record<string, unknown>> => {
+  const text = Buffer.concat((await request.toArray()) as Array<Buffer>).toString()
   return text ? JSON.parse(text) : {}
 }
 
-export const send = (response, status, type, body) => {
+export const send = (response: ServerResponse, status: number, type: string, body: string) => {
   response.writeHead(status, { "content-type": type })
   response.end(body)
 }
 
-export const json = (response, status, body) => send(response, status, "application/json", JSON.stringify(body, null, 2))
+export const json = (response: ServerResponse, status: number, body: unknown) =>
+  send(response, status, "application/json", JSON.stringify(body, null, 2))
 
-export const html = (response, body) => send(response, 200, "text/html; charset=utf-8", body)
+export const html = (response: ServerResponse, body: string) => send(response, 200, "text/html; charset=utf-8", body)
 
-export const redirect = (response, location) => {
+export const redirect = (response: ServerResponse, location: string) => {
   response.writeHead(303, { location })
   response.end()
 }
 
-const logRequests = (server) =>
+const logRequests = (server: Server) =>
   server.on("request", (request, response) => {
     const started = performance.now()
     response.on("finish", () => {
@@ -70,7 +84,7 @@ const logRequests = (server) =>
     })
   })
 
-export const listen = (server, name) =>
+export const listen = (server: Server, name: string) =>
   logRequests(server).listen(Number(process.env.PORT), "127.0.0.1", () =>
     console.log(
       `${name} listening on 127.0.0.1:${process.env.PORT} for worktree ${process.env.FORKYARD_WORKTREE ?? "(not under forkyard)"}`

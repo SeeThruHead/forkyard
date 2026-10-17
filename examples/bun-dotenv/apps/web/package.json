@@ -1,6 +1,10 @@
 {
   "name": "@shortly/web",
   "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun server.ts"
+  },
   "dependencies": {
     "@shortly/shared": "workspace:*"
   }

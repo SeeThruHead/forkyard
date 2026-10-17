@@ -1,0 +1,12 @@
+{
+  "name": "@dispatch/scheduler",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "register": "node src/register.ts"
+  },
+  "dependencies": {
+    "@dispatch/workflows": "workspace:*",
+    "@temporalio/client": "1.24.0"
+  }
+}

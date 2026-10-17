@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Northwind backoffice</title>
+    <style>
+      body {
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+        margin: 24px;
+        color: #111;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 12px;
+      }
+      td,
+      th {
+        border-bottom: 1px solid #ddd;
+        padding: 6px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+      code {
+        font-size: 12px;
+      }
+      section {
+        margin-top: 22px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Northwind backoffice <span id="branch"></span></h1>
+    <p>Calls go straight to each API's own host (cross-origin, CORS).</p>
+    <section>
+      <h2>Feature flags <small id="flags-url"></small></h2>
+      <div id="flags"></div>
+    </section>
+    <section>
+      <h2>Charges (billing-api)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Order</th>
+            <th>Status</th>
+            <th>Handled by</th>
+          </tr>
+        </thead>
+        <tbody id="charges"></tbody>
+      </table>
+    </section>
+    <section>
+      <h2>KYC webhooks (core-api)</h2>
+      <pre id="kyc"></pre>
+    </section>
+    <section>
+      <h2>Orders (graph)</h2>
+      <pre id="graph"></pre>
+    </section>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

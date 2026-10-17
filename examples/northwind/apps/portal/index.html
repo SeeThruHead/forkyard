@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Northwind portal</title>
+    <style>
+      body {
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+        margin: 24px;
+        color: #111;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 12px;
+      }
+      td,
+      th {
+        border-bottom: 1px solid #ddd;
+        padding: 6px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+      code {
+        font-size: 12px;
+      }
+      section {
+        margin-top: 22px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Northwind portal <span id="branch"></span></h1>
+    <p><img id="banner" alt="banner from image-api" /> <span id="user"></span> <a id="signin">Sign in</a></p>
+    <p id="flags"></p>
+    <form id="order">
+      <select name="sku" id="skus"></select>
+      <button>Place order</button>
+    </form>
+    <section>
+      <h2>Orders (core API at <code id="api-url"></code>)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>SKU</th>
+            <th>Status</th>
+            <th>What happened</th>
+          </tr>
+        </thead>
+        <tbody id="orders"></tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Charges, straight from billing-api (cross-origin, CORS) at <code id="billing-url"></code></h2>
+      <pre id="charges"></pre>
+    </section>
+    <section>
+      <h2>Same orders through graph at <code id="graph-url"></code></h2>
+      <pre id="graph"></pre>
+    </section>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "@northwind/messaging",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup-streams": "node setup-streams.ts"
+  },
+  "dependencies": {
+    "nats": "^2.29.3"
+  }
+}

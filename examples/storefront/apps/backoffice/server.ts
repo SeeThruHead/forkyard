@@ -1,12 +1,12 @@
 import { escape, html, listen, page, panel, readForm, redirect, table } from "@storefront/ui"
-import { createServer } from "node:http"
+import { createServer, type ServerResponse } from "node:http"
 
 const api = process.env.API_URL
 const branch = process.env.FORKYARD_BRANCH ?? "local"
 
-const get = async (path) => (await fetch(`${api}${path}`)).json()
+const get = async (path: string) => (await fetch(`${api}${path}`)).json()
 
-const home = async (response) => {
+const home = async (response: ServerResponse) => {
   const [about, jobs] = await Promise.all([get("/api/info"), get("/api/jobs")])
   html(
     response,
@@ -27,7 +27,7 @@ const home = async (response) => {
       <form method="post" action="/jobs"><select name="kind"><option>recount inventory</option><option>send order receipts</option><option>rebuild search index</option></select><button>Queue</button></form>
       ${table(
         ["#", "Job", "Status", "Run by"],
-        jobs.map((job) => [job.id, job.kind, job.status, job.done_by ?? ""])
+        jobs.map((job: Record<string, unknown>) => [job.id, job.kind, job.status, job.done_by ?? ""])
       )}
       <p class="muted">The workers pick these up within a second. Refresh to see the status change.</p>`
     })
@@ -45,9 +45,10 @@ listen(
       }
       return await home(response)
     } catch (error) {
+      const message = (error as Error).message
       console.error(error)
       response.writeHead(502, { "content-type": "text/plain" })
-      response.end(`backoffice could not reach the api at ${api}: ${error.message}`)
+      response.end(`backoffice could not reach the api at ${api}: ${message}`)
     }
   }),
   "backoffice"

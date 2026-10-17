@@ -1,0 +1,11 @@
+{
+  "name": "@northwind/flags",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.ts"
+  },
+  "dependencies": {
+    "@northwind/kit": "workspace:*"
+  }
+}

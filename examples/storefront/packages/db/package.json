@@ -2,6 +2,9 @@
   "name": "@storefront/db",
   "private": true,
   "type": "module",
+  "scripts": {
+    "migrate": "node migrate.ts"
+  },
   "dependencies": {
     "pg": "^8.16.0"
   }

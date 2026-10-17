@@ -15,7 +15,11 @@ const targets: ReadonlyArray<Target> = [
   { app: "bun-dotenv", project: "shortly", branch: "main" },
   { app: "bun-dotenv", project: "shortly", branch: "feat-tags" },
   { app: "python-compose", project: "taskboard", branch: "main" },
-  { app: "python-compose", project: "taskboard", branch: "feat-due-dates" }
+  { app: "python-compose", project: "taskboard", branch: "feat-due-dates" },
+  { app: "dispatch", project: "dispatch", branch: "main" },
+  { app: "dispatch", project: "dispatch", branch: "feat-ratings" },
+  { app: "northwind", project: "northwind", branch: "main" },
+  { app: "northwind", project: "northwind", branch: "feat-gift-cards" }
 ]
 
 const idOf = (target: Target) => WorktreeId.make(`${target.branch}.${target.project}`)
@@ -164,7 +168,7 @@ const program = Effect.gen(function* () {
     orders.map((list: any) => list.length).join(" / ")
   )
 
-  yield* step("5. Temporal per branch: a job runs on its own branch's worker and server")
+  yield* step("5. Temporal per branch: each storefront branch has its own server and namespaces")
   yield* check("three Temporal servers", new Set(infos.map((info: any) => info.temporal.address)).size === 3)
   yield* check(
     "each has the three namespaces",
@@ -250,7 +254,219 @@ const program = Effect.gen(function* () {
     envVar(taskboardApiEnv, "APP_NAME")?.value === "Taskboard" && envVar(taskboardApiEnv, "LOG_LEVEL")?.value === "debug"
   )
 
-  yield* step("9. restart api on fix-checkout only")
+  yield* step("9. dispatch: nine services, real Temporal workflows across three namespaces, three kinds of reload")
+  const ratings = "feat-ratings.dispatch"
+  const created: any = yield* postJson(`${url("gateway", ratings)}/deliveries`, { address: "Placed on feat-ratings by the tour" })
+  const delivery: any = yield* getJson(`${url("gateway", ratings)}/deliveries`).pipe(
+    Effect.map((list: any) => list.find((item: any) => item.id === created.id)),
+    Effect.filterOrFail((item: any) => item?.events.length >= 5),
+    Effect.retry(Schedule.spaced("500 millis").pipe(Schedule.upTo({ duration: "30 seconds" })))
+  )
+  const namespaces = [...new Set(delivery.events.map((event: any) => event.namespace))]
+  yield* check("one delivery ran workflows in dispatch, billing and notifications", namespaces.length === 3, namespaces.join(" -> "))
+  yield* check(
+    "every step ran on feat-ratings' own workers",
+    delivery.events.every((event: any) => String(event.handledBy).endsWith("on feat-ratings")),
+    `${delivery.events.length} steps`
+  )
+  const mainDeliveries: any = yield* getJson(`${url("gateway", "main.dispatch")}/deliveries`)
+  yield* check("main has no deliveries", mainDeliveries.length === 0)
+  const dispatchInfos: any = yield* Effect.forEach(["main.dispatch", ratings], (id) => getJson(`${url("api", id)}/info`))
+  yield* check(
+    "a Temporal server per branch",
+    dispatchInfos[0].temporal.address !== dispatchInfos[1].temporal.address,
+    dispatchInfos.map((info: any) => info.temporal.address).join(" vs ")
+  )
+  yield* check(
+    "codegen ran per branch: only feat-ratings knows the ratings table",
+    dispatchInfos[1].tables.includes("ratings") && !dispatchInfos[0].tables.includes("ratings")
+  )
+  const runsBefore = yield* forkyard.Runs({ owner: ownerOfWorktree(wt(ratings)), service: "api" })
+  const apiFile = path.join(home, "worktrees", "dispatch", "feat-ratings", "apps", "api", "src", "server.ts")
+  const source = yield* fs.readFileString(apiFile)
+  yield* fs.writeFileString(apiFile, source.replace('app: "api",', 'app: "api (edited by the tour)",'))
+  const reloaded: any = yield* getJson(`${url("api", ratings)}/info`).pipe(
+    Effect.filterOrFail((info: any) => info.app !== "api"),
+    Effect.retry(Schedule.spaced("500 millis").pipe(Schedule.upTo({ duration: "30 seconds" })))
+  )
+  const apiRuns = yield* forkyard.Runs({ owner: ownerOfWorktree(wt(ratings)), service: "api" })
+  yield* check(
+    "tsx watch reloaded api itself: new pid, forkyard's run unchanged",
+    reloaded.pid !== dispatchInfos[1].pid && apiRuns[0]?.n === runsBefore[0]?.n,
+    `pid ${dispatchInfos[1].pid} -> ${reloaded.pid}, still run #${apiRuns[0]?.n}`
+  )
+  const workflowsFile = path.join(home, "worktrees", "dispatch", "feat-ratings", "packages", "workflows", "src", "workflows.ts")
+  yield* fs.writeFileString(workflowsFile, `${yield* fs.readFileString(workflowsFile)}\n`)
+  const restartedWorkers = yield* forkyard.Status().pipe(
+    Stream.filter((snap) =>
+      ["dispatch-worker", "billing-worker", "notifications-worker"].every((name) => {
+        const view = snap[wt(ratings)]?.services[ServiceName.make(name)]
+        return view?.state._tag === "Ready" && (runOf(view.state)?.run ?? 0) >= 2
+      })
+    ),
+    Stream.runHead,
+    Effect.timeout("60 seconds"),
+    Effect.as(true),
+    Effect.orElseSucceed(() => false)
+  )
+  yield* check("forkyard's watcher restarted all three workers when a workflow changed", restartedWorkers)
+
+  yield* step("10. northwind: a large monorepo, 36 processes, two Temporal clusters, NATS, shared dev tools, three browser apps")
+  const nwMain = "main.northwind"
+  const nwFeat = "feat-gift-cards.northwind"
+  const nwIds = [nwMain, nwFeat]
+  const nwNow = yield* snapshot
+  const notUp = nwIds.flatMap((id) =>
+    Object.entries(nwNow[wt(id)]?.services ?? {})
+      .filter(([, view]) => !["Ready", "Done"].includes(view.state._tag))
+      .map(([name, view]) => `${id}/${name} ${view.state._tag}`)
+  )
+  const nwInfra = nwIds.flatMap((id) => Object.values(nwNow[wt(id)]?.infra ?? {})).filter((view) => view._tag !== "InfraReady")
+  yield* check("every service on both branches is ready or done", notUp.length === 0, notUp.join(", ") || `${nwIds.length} branches`)
+  yield* check("every infra resource and shared tool is ready", nwInfra.length === 0)
+
+  const nwInfo: any = yield* Effect.forEach(nwIds, (id) => getJson(`${url("core-api", id)}/info`))
+  const billingInfo: any = yield* Effect.forEach(nwIds, (id) => getJson(`${url("billing-api", id)}/info`))
+  yield* check(
+    "each branch has its own database",
+    nwInfo[0].database !== nwInfo[1].database,
+    nwInfo.map((info: any) => info.database).join(" vs ")
+  )
+  yield* check("each branch has its own NATS and Redis", nwInfo[0].nats !== nwInfo[1].nats && nwInfo[0].redis !== nwInfo[1].redis)
+  yield* check(
+    "two Temporal clusters per branch, four in total",
+    new Set([...nwInfo.map((info: any) => info.temporal), ...billingInfo.map((info: any) => info.temporal)]).size === 4
+  )
+  const corePg = envVar(yield* envOf(nwFeat, "core-api"), "DB_PORT")?.value
+  const billingPg = envVar(yield* envOf(nwFeat, "billing-api"), "DB_PORT")?.value
+  yield* check(
+    "billing has its own Postgres server",
+    corePg !== undefined && billingPg !== undefined && corePg !== billingPg,
+    `ports ${corePg} vs ${billingPg}`
+  )
+  const temporalUis = yield* Effect.forEach(["temporal", "billing-temporal"], (name) => statusOf(url(name, nwFeat)))
+  yield* check(
+    "both Temporal UIs are routed by name",
+    temporalUis.every((status) => status === 200),
+    temporalUis.join(", ")
+  )
+
+  const billingEnv = yield* envOf(nwFeat, "billing-worker")
+  const derived = envVar(billingEnv, "DATABASE_URL")
+  const dbPort = envVar(billingEnv, "DB_PORT")
+  yield* check(
+    "varlock re-derived DATABASE_URL from forkyard's DB_PORT, without a schema change",
+    derived?.source.startsWith("varlock") === true && derived.value.includes(`:${dbPort?.value}/`),
+    `${derived?.value}`
+  )
+  yield* check(
+    "a secret from the stand-in secrets store came through varlock",
+    envVar(billingEnv, "CATALOG_BUCKET")?.value === "northwind-dev-catalog"
+  )
+  const healthPorts = yield* Effect.forEach(nwIds, (id) =>
+    envOf(id, "billing-worker").pipe(Effect.map((vars) => envVar(vars, "HEALTH_PORT")?.value ?? ""))
+  )
+  const healthy = yield* Effect.forEach(healthPorts, (port) => statusOf(`http://127.0.0.1:${port}/ready`))
+  yield* check(
+    "workers get their own HEALTH_PORT per branch and answer on it",
+    healthPorts[0] !== healthPorts[1] && healthy.every((status) => status === 200),
+    healthPorts.join(" vs ")
+  )
+
+  const login: any = yield* postJson(`${url("auth", nwFeat)}/login`, { email: "tour@example.com" })
+  const discovery: any = yield* getJson(`${url("auth", nwFeat)}/.well-known/openid-configuration`)
+  const code = new URL(login.redirect).searchParams.get("code")
+  const signedIn: any = yield* getJson(`${url("core-api", nwFeat)}/auth/callback?code=${code}`)
+  yield* check("the login issuer is the branch's own hostname", discovery.issuer === url("auth", nwFeat), discovery.issuer)
+  yield* check("login redirects back to the branch's own portal", String(login.redirect).startsWith(url("portal", nwFeat)))
+  yield* check("core-api exchanged the code with the branch's auth server", signedIn.email === "tour@example.com")
+
+  const placed: any = yield* postJson(`${url("core-api", nwFeat)}/orders`, { sku: "LAMP-03", email: "tour@example.com" })
+  const order: any = yield* getJson(`${url("core-api", nwFeat)}/orders`).pipe(
+    Effect.map((orders: any) => orders.find((item: any) => item.id === placed.id)),
+    Effect.filterOrFail((item: any) => item?.status === "paid" && item.events.some((event: any) => event.step === "orders.paid handled")),
+    Effect.retry(Schedule.spaced("500 millis").pipe(Schedule.upTo({ duration: "45 seconds" })))
+  )
+  const handlers = [...new Set(order.events.map((event: any) => String(event.by).split(" ")[0]))]
+  yield* check(
+    "one order crossed core-api, BullMQ, both Temporal clusters, the outbox, NATS and billing",
+    ["core-api", "jobs", "platform-worker", "outbox", "event-handlers", "billing-worker"].every((name) => handlers.includes(name)),
+    handlers.join(", ")
+  )
+  yield* check(
+    "every step ran on feat-gift-cards",
+    order.events.every((event: any) => String(event.by).endsWith("on feat-gift-cards"))
+  )
+  const mainOrders: any = yield* getJson(`${url("core-api", nwMain)}/orders`)
+  yield* check(
+    "main saw none of it",
+    mainOrders.every((item: any) => item.id !== placed.id || item.sku !== "LAMP-03" || item.email !== "tour@example.com")
+  )
+  const viaProxy: any = yield* getJson(`${url("portal", nwFeat)}/core-api/orders`)
+  yield* check(
+    "the portal's Vite proxy reaches the branch's own core-api",
+    viaProxy.some((item: any) => item.id === placed.id)
+  )
+  const mail: any = yield* getJson("http://mailpit.northwind.localhost/api/v1/messages").pipe(
+    Effect.filterOrFail((body: any) => body.messages.some((message: any) => message.Subject.startsWith("[feat-gift-cards]"))),
+    Effect.retry(Schedule.spaced("500 millis").pipe(Schedule.upTo({ duration: "15 seconds" })))
+  )
+  yield* check("the confirmation email reached the shared Mailpit, tagged with its branch", mail.messages.length > 0)
+
+  yield* Effect.tryPromise(() =>
+    fetch(`${url("flags", nwFeat)}/flags/gift-cards`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: '{"value":true}'
+    })
+  )
+  const flagValues: any = yield* Effect.forEach(nwIds, (id) => getJson(`${url("flags", id)}/flags`))
+  yield* check(
+    "flags are per branch: on for feat-gift-cards, still off on main",
+    flagValues[1]["gift-cards"] === true && flagValues[0]["gift-cards"] === false
+  )
+  const banners = yield* Effect.forEach(nwIds, (id) =>
+    Effect.tryPromise(() => fetch(`${url("image-api", id)}/images/banner.svg`).then((response) => response.text()))
+  )
+  yield* check(
+    "the shared object store keeps each branch's objects apart (bucket per branch from env)",
+    banners[0]!.includes("image-api on main") && banners[1]!.includes("image-api on feat-gift-cards")
+  )
+  const skuCounts: any = yield* Effect.forEach(nwIds, (id) => getJson(`${url("core-api", id)}/skus`))
+  yield* check("one shared catalog serves both branches", skuCounts[0].length === skuCounts[1].length && skuCounts[0].length > 0)
+
+  const allowOrigin = (target: string, origin: string) =>
+    Effect.tryPromise(() =>
+      fetch(target, { method: "OPTIONS", headers: { origin, "access-control-request-method": "GET" } }).then((response) =>
+        response.headers.get("access-control-allow-origin")
+      )
+    )
+  const corsCases = [
+    ["billing-api", "/charges", "portal"],
+    ["billing-api", "/charges", "backoffice"],
+    ["core-api", "/kyc", "backoffice"],
+    ["graph", "/graphql", "backoffice"]
+  ] as const
+  const allowed = yield* Effect.forEach(corsCases, ([service, path, app]) =>
+    allowOrigin(`${url(service, nwFeat)}${path}`, url(app, nwFeat))
+  )
+  const crossBranch = yield* Effect.forEach(corsCases, ([service, path, app]) =>
+    allowOrigin(`${url(service, nwFeat)}${path}`, url(app, nwMain))
+  )
+  const foreign = yield* allowOrigin(`${url("core-api", nwFeat)}/orders`, "http://evil.example")
+  yield* check(
+    "CORS allows each API's own branch apps",
+    allowed.every((origin, index) => origin === url(corsCases[index]![2], nwFeat)),
+    `${allowed.length} cases`
+  )
+  yield* check(
+    "CORS refuses the other branch's apps",
+    crossBranch.every((origin) => origin === null),
+    `${crossBranch.length} cases`
+  )
+  yield* check("CORS refuses a foreign origin", foreign === null)
+
+  yield* step("11. restart api on fix-checkout only")
   const before = yield* snapshot
   const others = (snap: Snapshot): ReadonlyArray<number | undefined> =>
     ["main.storefront", "feat-gift-cards.storefront"].map((id) => apiRun(snap, id)?.pid)
@@ -277,9 +493,10 @@ const program = Effect.gen(function* () {
   const previous = yield* forkyard.RunLog({ runId: runs[1]!.id }).pipe(Stream.runCollect)
   yield* check("previous run's log still readable", runs.length >= 2 && previous.length > 0, `run #${runs[1]?.n}: ${previous.length} lines`)
 
-  yield* step("10. telemetry: everything above landed in Maple")
+  yield* step("12. telemetry: everything above landed in Maple")
   const mapleUrl = `http://127.0.0.1:${process.env.FORKYARD_MAPLE_PORT ?? "14418"}`
   yield* Effect.tryPromise(() => fetch(url("shop", "feat-gift-cards.storefront")).then((response) => response.text()))
+  yield* Effect.tryPromise(() => fetch(`${url("reports", "feat-gift-cards.storefront")}/sales`).then((response) => response.text()))
   const query = (sql: string) =>
     Effect.tryPromise(() =>
       fetch(`${mapleUrl}/local/query`, {
@@ -329,6 +546,13 @@ const program = Effect.gen(function* () {
       HAVING countIf(ServiceName = 'shop') > 0 AND countIf(ServiceName = 'api') > 0 AND countIf(SpanName LIKE 'pg%') > 0
     )`)
   yield* check("one trace spans shop, api and Postgres", distributed > 0, `${distributed} traces`)
+  const effectApp = yield* eventually(`
+    SELECT count() AS n FROM (
+      SELECT TraceId FROM traces WHERE ServiceName = 'reports' AND ResourceAttributes['service.namespace'] = 'feat-gift-cards.storefront'
+      GROUP BY TraceId
+      HAVING countIf(SpanName LIKE 'http.server%') > 0 AND countIf(SpanName = 'Sales.byProduct') > 0 AND countIf(SpanName = 'sql.execute') > 0
+    )`)
+  yield* check("the Effect app traces request, service and SQL itself through Otlp.layer", effectApp > 0, `${effectApp} traces`)
   const ownDatabase = yield* count(
     `SELECT count() AS n FROM traces WHERE ServiceName = 'api' AND ResourceAttributes['service.namespace'] = 'feat-gift-cards.storefront' AND SpanAttributes['db.name'] = 'storefront_feat_gift_cards'`
   )

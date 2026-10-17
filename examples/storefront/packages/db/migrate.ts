@@ -6,14 +6,14 @@ const client = new pg.Client({ connectionString: process.env.DATABASE_URL })
 
 await client.connect()
 await client.query("CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())")
-const applied = new Set((await client.query("SELECT name FROM schema_migrations")).rows.map((row) => row.name))
+const applied = new Set((await client.query<{ name: string }>("SELECT name FROM schema_migrations")).rows.map((row) => row.name))
 const files = (await readdir(dir)).filter((file) => file.endsWith(".sql")).sort()
 const pending = files.filter((file) => !applied.has(file))
-const database = (await client.query("SELECT current_database() AS name")).rows[0].name
+const database = (await client.query<{ name: string }>("SELECT current_database() AS name")).rows[0]?.name
 
 console.log(`${database}: ${applied.size} applied, ${pending.length} pending`)
 await pending.reduce(
-  (previous, file) =>
+  (previous: Promise<void>, file) =>
     previous.then(async () => {
       const sql = await readFile(new URL(file, dir), "utf8")
       await client.query("BEGIN")

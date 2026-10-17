@@ -1,6 +1,11 @@
 {
   "name": "@shortly/api",
   "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun server.ts",
+    "migrate": "bun migrate.ts"
+  },
   "dependencies": {
     "@shortly/shared": "workspace:*"
   }

@@ -1,0 +1,12 @@
+{
+  "name": "@northwind/outbox",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/main.ts"
+  },
+  "dependencies": {
+    "@northwind/kit": "workspace:*",
+    "nats": "^2.29.3"
+  }
+}

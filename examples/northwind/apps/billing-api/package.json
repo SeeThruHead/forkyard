@@ -1,0 +1,19 @@
+{
+  "name": "@northwind/billing-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/server.ts",
+    "worker": "node src/worker.ts",
+    "db:migrate": "node db/migrate.ts",
+    "db:generate-client": "node db/generate.ts",
+    "provider:subscribe-webhooks": "node src/subscribe.ts"
+  },
+  "dependencies": {
+    "@northwind/kit": "workspace:*",
+    "@temporalio/client": "1.24.0",
+    "@temporalio/worker": "1.24.0",
+    "@temporalio/workflow": "1.24.0",
+    "pg": "^8.16.0"
+  }
+}

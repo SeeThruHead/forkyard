@@ -1,0 +1,16 @@
+{
+  "name": "@dispatch/db",
+  "private": true,
+  "type": "module",
+  "exports": "./src/tables.ts",
+  "scripts": {
+    "migrate": "node migrate.ts",
+    "codegen": "node codegen.ts"
+  },
+  "dependencies": {
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.0"
+  }
+}

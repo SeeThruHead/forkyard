@@ -6,8 +6,10 @@ const who = `workers pid ${process.pid} (${namespace} on ${process.env.TEMPORAL_
 
 const namespaces = await fetch(`${process.env.TEMPORAL_HTTP_URL}/api/v1/namespaces`)
   .then((response) => response.json())
-  .then((body) => body.namespaces.map((item) => item.namespaceInfo.name).join(", "))
-  .catch((error) => `unreachable (${error.message})`)
+  .then((body: { namespaces: Array<{ namespaceInfo: { name: string } }> }) =>
+    body.namespaces.map((item) => item.namespaceInfo.name).join(", ")
+  )
+  .catch((error: Error) => `unreachable (${error.message})`)
 const database = (await pool.query("SELECT current_database() AS name")).rows[0].name
 
 console.log(`workers started: database ${database}, temporal namespaces ${namespaces}`)
@@ -22,4 +24,4 @@ const tick = async () => {
   rows.forEach((row) => console.log(`ran job ${row.id} (${row.kind})`))
 }
 
-setInterval(() => tick().catch((error) => console.error(`tick failed: ${error.message}`)), 1000)
+setInterval(() => tick().catch((error: Error) => console.error(`tick failed: ${error.message}`)), 1000)

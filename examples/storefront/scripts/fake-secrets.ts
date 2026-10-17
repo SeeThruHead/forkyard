@@ -1,4 +1,4 @@
-const values = {
+const values: Record<string, string> = {
   "auth/issuer-url": "https://auth.example.dev/realms/storefront-dev",
   "auth/client-id": "storefront-local-client",
   "payments/secret-key": "sk_test_example_not_a_real_key",

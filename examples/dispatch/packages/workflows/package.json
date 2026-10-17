@@ -1,0 +1,12 @@
+{
+  "name": "@dispatch/workflows",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./workflows": "./src/workflows.ts"
+  },
+  "dependencies": {
+    "@temporalio/workflow": "1.24.0"
+  }
+}

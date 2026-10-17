@@ -1,0 +1,11 @@
+{
+  "name": "dispatch",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "forkyard up",
+    "down": "forkyard down",
+    "status": "forkyard status"
+  },
+  "packageManager": "pnpm@10.33.0"
+}

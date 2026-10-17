@@ -2,7 +2,13 @@
   "name": "@storefront/workers",
   "private": true,
   "type": "module",
+  "scripts": {
+    "dev": "node -r @opentelemetry/auto-instrumentations-node/register worker.ts",
+    "start": "node worker.ts"
+  },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.62.2",
     "@storefront/ui": "workspace:*",
     "pg": "^8.16.0"
   }

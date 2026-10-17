@@ -1,22 +1,24 @@
 import { html, json, listen, page, panel, readJson, table } from "@storefront/ui"
-import { createServer } from "node:http"
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import pg from "pg"
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 4 })
 const startedAt = new Date().toISOString()
 const branch = process.env.FORKYARD_BRANCH ?? "local"
 
-const query = async (sql, params = []) => (await pool.query(sql, params)).rows
+const query = async (sql: string, params: ReadonlyArray<unknown> = []) => (await pool.query(sql, params)).rows
 
-const hasTable = async (name) => (await query("SELECT to_regclass($1) IS NOT NULL AS present", [name]))[0].present
+const hasTable = async (name: string) => (await query("SELECT to_regclass($1) IS NOT NULL AS present", [name]))[0].present
 
 const temporalNamespaces = async () => {
   try {
     const response = await fetch(`${process.env.TEMPORAL_HTTP_URL}/api/v1/namespaces`)
     const body = await response.json()
-    return body.namespaces.map((namespace) => namespace.namespaceInfo.name).filter((name) => name !== "temporal-system")
+    return body.namespaces
+      .map((namespace: { namespaceInfo: { name: string } }) => namespace.namespaceInfo.name)
+      .filter((name: string) => name !== "temporal-system")
   } catch (error) {
-    return [`unreachable: ${error.message}`]
+    return [`unreachable: ${(error as Error).message}`]
   }
 }
 
@@ -39,7 +41,9 @@ const info = async () => ({
   }
 })
 
-const routes = {
+type Handler = (request: IncomingMessage, response: ServerResponse) => Promise<void>
+
+const routes: Record<string, Handler> = {
   "GET /health": async (_request, response) => json(response, 200, { ok: true }),
   "GET /api/info": async (_request, response) => json(response, 200, await info()),
   "GET /api/products": async (_request, response) => json(response, 200, await query("SELECT * FROM products ORDER BY id")),
@@ -104,9 +108,9 @@ const routes = {
 
 listen(
   createServer((request, response) => {
-    const handler = routes[`${request.method} ${new URL(request.url, "http://x").pathname}`]
+    const handler = routes[`${request.method} ${new URL(request.url ?? "/", "http://x").pathname}`]
     if (!handler) return json(response, 404, { error: "not found" })
-    return handler(request, response).catch((error) => {
+    return handler(request, response).catch((error: Error) => {
       console.error(error)
       json(response, 500, { error: error.message })
     })

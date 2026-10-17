@@ -1,0 +1,5 @@
+import { defineConfig } from "vite"
+
+export default defineConfig({
+  server: { host: "127.0.0.1", port: process.env.PORT ? Number(process.env.PORT) : 4503, strictPort: true, allowedHosts: [".localhost"] }
+})

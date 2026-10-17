@@ -1,0 +1,12 @@
+{
+  "name": "@northwind/jobs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/jobs.ts"
+  },
+  "dependencies": {
+    "@northwind/kit": "workspace:*",
+    "bullmq": "^5.56.0"
+  }
+}

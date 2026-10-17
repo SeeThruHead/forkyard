@@ -1,0 +1,13 @@
+{
+  "name": "@northwind/graph",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node -r @opentelemetry/auto-instrumentations-node/register src/server.ts"
+  },
+  "dependencies": {
+    "@northwind/kit": "workspace:*",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.62.2"
+  }
+}

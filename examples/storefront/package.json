@@ -7,10 +7,6 @@
     "down": "forkyard down",
     "status": "forkyard status"
   },
-  "dependencies": {
-    "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/auto-instrumentations-node": "^0.62.2"
-  },
   "devDependencies": {
     "varlock": "1.23.0"
   },

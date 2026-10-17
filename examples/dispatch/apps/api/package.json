@@ -1,0 +1,21 @@
+{
+  "name": "@dispatch/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --require @opentelemetry/auto-instrumentations-node/register src/server.ts",
+    "start": "node src/server.ts"
+  },
+  "dependencies": {
+    "@dispatch/db": "workspace:*",
+    "@dispatch/workflows": "workspace:*",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.62.2",
+    "@temporalio/client": "1.24.0",
+    "pg": "^8.16.0",
+    "tsx": "4.23.15"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.0"
+  }
+}

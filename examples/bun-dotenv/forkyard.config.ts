@@ -1,7 +1,5 @@
-import { cmd, Env, Infra, make, Postgres, Redis, Service, url } from "forkyard"
+import { bun, Env, Infra, make, Postgres, Redis, Service, url, watch } from "forkyard"
 import { Effect } from "effect"
-
-const bun = (file: string) => cmd("bun", file)
 
 export default make(
   "shortly",
@@ -10,18 +8,41 @@ export default make(
     const redis = yield* Infra(Redis.native({ scope: "worktree" }))
 
     const envFrom = [Env.dotenv(".env", ".env.local")]
-    const routing = { API_URL: yield* url("api"), WEB_URL: yield* url("web") }
+    const env = { API_URL: yield* url("api"), WEB_URL: yield* url("web") }
 
-    const migrate = yield* Service.task("migrate", { cwd: "apps/api", run: bun("migrate.ts"), uses: [postgres], envFrom })
+    const migrate = yield* Service.task("migrate", {
+      cwd: "apps/api",
+      run: "bun run migrate",
+      uses: [postgres],
+      envFrom,
+      watch: watch("apps/api/migrate.ts")
+    })
+
     const api = yield* Service.http("api", {
       cwd: "apps/api",
-      run: bun("server.ts"),
+      run: "bun run dev",
       uses: [postgres, redis],
       after: [migrate],
-      env: routing,
+      env,
+      envFrom,
+      watch: watch("apps/api/**", "packages/shared/**")
+    })
+
+    yield* Service.worker("worker", {
+      cwd: "apps/worker",
+      run: bun("worker.ts"),
+      watch: watch("apps/worker/**", "packages/shared/**"),
+      uses: [postgres, redis],
+      after: [migrate],
       envFrom
     })
-    yield* Service.worker("worker", { cwd: "apps/worker", run: bun("worker.ts"), uses: [postgres, redis], after: [migrate], envFrom })
-    yield* Service.http("web", { cwd: "apps/web", run: bun("server.ts"), after: [api], env: routing, envFrom })
+    yield* Service.http("web", {
+      cwd: "apps/web",
+      run: "bun run dev",
+      after: [api],
+      env,
+      envFrom,
+      watch: watch("apps/web/**", "packages/shared/**")
+    })
   })
 )

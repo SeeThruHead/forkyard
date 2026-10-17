@@ -1,6 +1,4 @@
-import { cmd, defineStack, Env, Sqlite } from "forkyard"
-
-const python = (module: string) => cmd("python3", "-u", "-m", module)
+import { defineStack, Env, Sqlite, watch } from "forkyard"
 
 export default defineStack({
   name: "taskboard",
@@ -8,10 +6,16 @@ export default defineStack({
     sqlite: Sqlite.file({ file: "taskboard.sqlite", env: ({ path }) => ({ DATABASE_PATH: path }) })
   },
   services: {
-    migrate: { kind: "task", run: python("taskboard.migrate"), uses: ["sqlite"], envFrom: [Env.compose({ service: "migrate" })] },
+    migrate: {
+      kind: "task",
+      run: "python3 -u -m taskboard.migrate",
+      uses: ["sqlite"],
+      envFrom: [Env.compose({ service: "migrate" })],
+      watch: watch("taskboard/migrate.py")
+    },
     api: {
       kind: "http",
-      run: python("taskboard.api"),
+      run: "python3 -u -m taskboard.api",
       uses: ["sqlite"],
       after: ["migrate"],
       envFrom: [Env.compose({ service: "api" })],
@@ -19,14 +23,14 @@ export default defineStack({
     },
     worker: {
       kind: "worker",
-      run: python("taskboard.worker"),
+      run: "python3 -u -m taskboard.worker",
       uses: ["sqlite"],
       after: ["migrate"],
       envFrom: [Env.compose({ service: "worker" })]
     },
     web: {
       kind: "http",
-      run: python("taskboard.web"),
+      run: "python3 -u -m taskboard.web",
       after: ["api"],
       envFrom: [Env.compose({ service: "web" })],
       env: (urls) => ({ API_URL: urls.api })
