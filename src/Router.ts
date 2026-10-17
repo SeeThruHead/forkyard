@@ -1,7 +1,7 @@
 import { Context, Effect, FileSystem, Layer, Path, Record, type Scope, Stream, SubscriptionRef } from "effect"
 import type { Port } from "./Ids.ts"
 
-export type Route = { readonly host: string; readonly port: Port }
+export type Route = { readonly host: string; readonly port: Port; readonly upstream?: string }
 
 const routeId = (host: string) => host.replaceAll(".", "-")
 
@@ -13,7 +13,10 @@ export const traefikConfig = (routes: Readonly<Record<string, Route>>, upstreamH
         entries.map((route) => [routeId(route.host), { rule: `Host(\`${route.host}\`)`, service: routeId(route.host) }])
       ),
       services: Object.fromEntries(
-        entries.map((route) => [routeId(route.host), { loadBalancer: { servers: [{ url: `http://${upstreamHost}:${route.port}` }] } }])
+        entries.map((route) => [
+          routeId(route.host),
+          { loadBalancer: { servers: [{ url: `http://${route.upstream ?? upstreamHost}:${route.port}` }] } }
+        ])
       )
     }
   }

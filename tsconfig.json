@@ -36,5 +36,5 @@
     "test",
     "tools"
   ],
-  "exclude": ["test/lint/fixtures"]
+  "exclude": ["test/lint/fixtures", "harness/container/app", "harness/container/app-postgres"]
 }

@@ -1,6 +1,6 @@
 import { Effect, Layer, Path } from "effect"
 import type { Port } from "./Ids.ts"
-import { dockerContainer } from "./infra/Shared.ts"
+import { dockerContainer, forkyardName } from "./infra/Shared.ts"
 import { toolsFor } from "./InfraManager.ts"
 import { Proc } from "./Proc.ts"
 import { Router } from "./Router.ts"
@@ -31,7 +31,7 @@ export const layer = (options: {
           .pipe(Effect.orDie, Effect.asVoid)
       yield* dockerContainer(toolsFor(proc, "forkyard"), {
         infra: "traefik",
-        name: `forkyard-traefik-${options.port}`,
+        name: forkyardName("traefik", options.port),
         args: [
           "-p",
           `${options.port}:80`,

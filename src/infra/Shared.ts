@@ -4,7 +4,18 @@ import { cmd, type Env, InfraError, type InfraProcess, type InfraTools, type Run
 
 export const port = (infra: string) => allocatePort.pipe(Effect.mapError((error) => new InfraError({ infra, message: error.message })))
 
-export const containerName = (infra: string, instance: string) => `forkyard-${infra}-${instance.replaceAll(/[^a-zA-Z0-9]+/g, "-")}`
+const instanceName = process.env.FORKYARD_INSTANCE ? `-${process.env.FORKYARD_INSTANCE}` : ""
+
+export const dockerUpstream = process.env.FORKYARD_DOCKER_HOST
+
+export const dockerReach = dockerUpstream ?? "127.0.0.1"
+
+export const publish = (hostPort: number, containerPort: number) =>
+  `${process.env.FORKYARD_DOCKER_BIND ?? "127.0.0.1"}:${hostPort}:${containerPort}`
+
+export const forkyardName = (...parts: ReadonlyArray<string | number>) => [`forkyard${instanceName}`, ...parts].join("-")
+
+export const containerName = (infra: string, instance: string) => forkyardName(infra, instance.replaceAll(/[^a-zA-Z0-9]+/g, "-"))
 
 export const waitUntil = <A, E, R>(infra: string, check: Effect.Effect<A, E, R>, within: `${number} seconds`) =>
   check.pipe(

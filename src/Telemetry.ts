@@ -3,7 +3,7 @@ import { FetchHttpClient } from "effect/http"
 import { Otlp, OtlpSerialization } from "effect/observability"
 import { telemetryDir } from "./Package.ts"
 import type { Port } from "./Ids.ts"
-import { dockerContainer, fetchOk, readyOrExit } from "./infra/Shared.ts"
+import { dockerContainer, dockerReach, dockerUpstream, fetchOk, forkyardName, publish, readyOrExit } from "./infra/Shared.ts"
 import { toolsFor } from "./InfraManager.ts"
 import { Proc } from "./Proc.ts"
 import { Router } from "./Router.ts"
@@ -15,7 +15,7 @@ export const mapleImage = "forkyard-maple:v0.0.22"
 
 const defaultMaplePort = 14418
 
-const mapleVolume = (port: number) => (port === defaultMaplePort ? "forkyard-maple" : `forkyard-maple-${port}`)
+const mapleVolume = (port: number) => (port === defaultMaplePort ? forkyardName("maple") : forkyardName("maple", port))
 
 export type TelemetryOptions = {
   readonly port: Port
@@ -64,17 +64,17 @@ export class Maple extends Context.Service<
         const proc = yield* Proc
         const router = yield* Router
         const tools = toolsFor(proc, "forkyard")
-        const otlpUrl = `http://127.0.0.1:${options.port}`
+        const otlpUrl = `http://${dockerReach}:${options.port}`
 
         yield* ensureImage(tools)
         const started = yield* dockerContainer(tools, {
           infra: "maple",
-          name: `forkyard-maple-${options.port}`,
-          args: ["-p", `127.0.0.1:${options.port}:14318`, "-v", `${mapleVolume(options.port)}:/var/lib/maple`, mapleImage]
+          name: forkyardName("maple", options.port),
+          args: ["-p", publish(options.port, 14318), "-v", `${mapleVolume(options.port)}:/var/lib/maple`, mapleImage]
         })
 
         yield* readyOrExit("maple", started, fetchOk(`${otlpUrl}/health`), "60 seconds")
-        yield* router.expose({ host: options.host, port: options.port })
+        yield* router.expose({ host: options.host, port: options.port, ...(dockerUpstream ? { upstream: dockerUpstream } : {}) })
 
         return Maple.of({ otlpUrl, uiUrl: `http://${options.host}${proxySuffix(options.proxyPort)}` })
       }).pipe(

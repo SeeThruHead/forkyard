@@ -3,7 +3,7 @@ import { Effect, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { databaseName, InfraName, type Port } from "../Ids.ts"
 import { cmd, type Env, InfraError, type InfraServer, type InfraSpec, type InfraTools, type Run, toRun, type Worktree } from "../Stack.ts"
-import { containerName, dockerContainer, port, readyOrExit } from "./Shared.ts"
+import { containerName, dockerContainer, dockerReach, port, publish, readyOrExit } from "./Shared.ts"
 
 export type Database = {
   readonly url: string
@@ -28,7 +28,7 @@ type Options = {
 
 const cloningFilesystems = ["btrfs", "xfs", "zfs", "apfs"]
 
-const urlFor = (port: Port, database: string) => `postgres://postgres@127.0.0.1:${port}/${database}`
+const urlFor = (port: Port, database: string) => `postgres://postgres@${dockerReach}:${port}/${database}`
 
 const majorVersion = (image: string) => Number(/postgres:(\d+)/.exec(image)?.[1] ?? "0")
 
@@ -198,7 +198,7 @@ export const docker = (options: Options): InfraSpec => {
       name: container,
       args: [
         "-p",
-        `127.0.0.1:${hostPort}:5432`,
+        publish(hostPort, 5432),
         "-e",
         "POSTGRES_HOST_AUTH_METHOD=trust",
         "-v",
@@ -236,7 +236,7 @@ export const docker = (options: Options): InfraSpec => {
     yield* Effect.annotateCurrentSpan({ "forkyard.db.created": created })
 
     const url = urlFor(serverPort, database)
-    return options.env?.({ url, database, host: "127.0.0.1", port: serverPort }) ?? { DATABASE_URL: url }
+    return options.env?.({ url, database, host: dockerReach, port: serverPort }) ?? { DATABASE_URL: url }
   })
 
   const refreshGolden = Effect.fn("Postgres.refreshGolden")(function* (server: InfraServer, worktree: Worktree, tools: InfraTools) {

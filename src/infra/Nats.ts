@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { InfraName } from "../Ids.ts"
 import type { Env, InfraServer, InfraSpec, InfraTools, Worktree } from "../Stack.ts"
-import { containerName, dockerContainer, fetchOk, port, readyOrExit } from "./Shared.ts"
+import { containerName, dockerContainer, dockerReach, fetchOk, port, publish, readyOrExit } from "./Shared.ts"
 
 export type NatsTenant = { readonly url: string; readonly monitorUrl: string; readonly subjectPrefix: string }
 
@@ -24,17 +24,17 @@ export const docker = (options: Options): InfraSpec => {
     const started = yield* dockerContainer(tools, {
       infra: name,
       name: containerName(name, instance),
-      args: ["-p", `127.0.0.1:${client}:4222`, "-p", `127.0.0.1:${monitor}:8222`, image, "-js", "-m", "8222"]
+      args: ["-p", publish(client, 4222), "-p", publish(monitor, 8222), image, "-js", "-m", "8222"]
     })
-    yield* readyOrExit(name, started, fetchOk(`http://127.0.0.1:${monitor}/healthz?js-enabled-only=true`), "30 seconds")
+    yield* readyOrExit(name, started, fetchOk(`http://${dockerReach}:${monitor}/healthz?js-enabled-only=true`), "30 seconds")
 
     return { port: client, env: { NATS_MONITOR_PORT: String(monitor) }, routes: {} }
   })
 
   const tenant = Effect.fn("Nats.tenant")(function* (server: InfraServer, worktree: Worktree) {
     const nats: NatsTenant = {
-      url: `nats://127.0.0.1:${server.port}`,
-      monitorUrl: `http://127.0.0.1:${server.env.NATS_MONITOR_PORT}`,
+      url: `nats://${dockerReach}:${server.port}`,
+      monitorUrl: `http://${dockerReach}:${server.env.NATS_MONITOR_PORT}`,
       subjectPrefix: options.scope === "shared" ? `${worktree.id}.` : ""
     }
     yield* Effect.annotateCurrentSpan({ "messaging.system": "nats", "server.port": server.port })
