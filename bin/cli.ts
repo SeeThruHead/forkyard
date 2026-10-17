@@ -1,5 +1,5 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { Console, Effect, FileSystem, Layer, Option, Path, Stream } from "effect"
+import { Cause, Console, Effect, FileSystem, Layer, Option, Path, Stream } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { ForkyardClient } from "../src/Client.ts"
@@ -238,11 +238,29 @@ const forkyard = Command.make("forkyard").pipe(
   Command.withSubcommands([daemon, up, down, status, env, logs, attach, infraCommand, service, update])
 )
 
+const messageOf = (error: unknown) => {
+  if (typeof error === "string") return error
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
+const report = (cause: Cause.Cause<unknown>) =>
+  Option.match(Cause.findErrorOption(cause), {
+    onNone: () => Console.error(Cause.pretty(cause)),
+    onSome: (error) => Console.error(`forkyard: ${messageOf(error)}`)
+  })
+
 const unsupported = unsupportedHere()
 
 if (unsupported) {
   console.error(unsupported)
   process.exitCode = 1
 } else {
-  forkyard.pipe(Command.run({ version: "0.1.0" }), Effect.provide(NodeServices.layer), Effect.provide(osLayer), NodeRuntime.runMain)
+  forkyard.pipe(
+    Command.run({ version: packageVersion }),
+    Effect.tapCause((cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : report(cause))),
+    Effect.provide(NodeServices.layer),
+    Effect.provide(osLayer),
+    NodeRuntime.runMain({ disableErrorReporting: true })
+  )
 }
