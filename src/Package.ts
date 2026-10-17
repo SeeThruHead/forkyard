@@ -18,7 +18,9 @@ const findRoot = (dir: string): string => {
   return findRoot(parent)
 }
 
-export const packageRoot = findRoot(dirname(fileURLToPath(import.meta.url)))
+const throughBrewOpt = (root: string) => root.replace(/\/Cellar\/forkyard\/[^/]+\//, "/opt/forkyard/")
+
+export const packageRoot = throughBrewOpt(findRoot(dirname(fileURLToPath(import.meta.url))))
 
 export const packageVersion: string = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")).version
 

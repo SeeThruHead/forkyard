@@ -168,11 +168,12 @@ export const status = Effect.gen(function* () {
   return yield* manager().status
 })
 
-type InstallMethod = "source" | "brew" | "pnpm" | "npm"
+type InstallMethod = "source" | "brew" | "bun" | "pnpm" | "npm"
 
 const installMethod = (): InstallMethod => {
   if (isSourceCheckout) return "source"
-  if (packageRoot.includes("/Cellar/")) return "brew"
+  if (packageRoot.includes("/opt/forkyard/")) return "brew"
+  if (packageRoot.includes("/.bun/install/global/")) return "bun"
   if (packageRoot.includes("/pnpm/")) return "pnpm"
   return "npm"
 }
@@ -180,6 +181,7 @@ const installMethod = (): InstallMethod => {
 const upgradePackage = (method: InstallMethod) => {
   if (method === "brew") return run("brew", "upgrade", "forkyard")
   if (method === "pnpm") return run("pnpm", "add", "-g", "forkyard@latest")
+  if (method === "bun") return run("bun", "add", "-g", "forkyard@latest")
   return run("npm", "install", "-g", "forkyard@latest")
 }
 
