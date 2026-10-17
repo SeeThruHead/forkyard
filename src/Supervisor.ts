@@ -1,14 +1,16 @@
-import { Clock, Context, Deferred, Effect, FileSystem, Layer, Metric, Option, PubSub, Ref, Schedule, Schema, Semaphore, type Scope } from "effect"
+import { Cause, Clock, Context, Deferred, Effect, Layer, Metric, PubSub, Schedule, Schema, Semaphore, type Scope } from "effect"
 import { HttpClient } from "effect/http"
-import { EnvError, type EnvEntry, type EnvLoadContext, looksSensitive } from "./EnvSource.ts"
+import { daemonEnv, EnvResolver, owned, type OwnedEnv } from "./Env.ts"
+import type { InfraName, Port, ServiceName, WorktreeId } from "./Ids.ts"
+import { ownerOfWorktree } from "./Ids.ts"
 import { InfraManager } from "./InfraManager.ts"
 import * as Metrics from "./Metrics.ts"
-import type { EnvVar } from "./Model.ts"
-import { nodeName, plan } from "./Plan.ts"
-import { Ports } from "./Ports.ts"
-import { Proc } from "./Proc.ts"
+import type { RunRef, ServiceState, ServiceView } from "./Model.ts"
+import { plan } from "./Plan.ts"
+import { allocatePort } from "./Ports.ts"
+import { Proc, type Spawned } from "./Proc.ts"
 import { Router } from "./Router.ts"
-import { type Env, hostOf, type InfraNode, type Node, type ServiceNode, type Stack, urlOf, type Worktree } from "./Stack.ts"
+import { hostOf, type InfraNode, type InfraSpec, type Node, type ServiceNode, type Stack, urlOf, type Worktree } from "./Stack.ts"
 import { Status } from "./Status.ts"
 
 export class TaskFailed extends Schema.TaggedError<TaskFailed>()("TaskFailed", {
@@ -16,274 +18,323 @@ export class TaskFailed extends Schema.TaggedError<TaskFailed>()("TaskFailed", {
   exitCode: Schema.Number
 }) {}
 
-type Owned = { readonly value: string; readonly source: string }
-type Sourced = EnvEntry & { readonly source: string }
+export class DependencyFailed extends Schema.TaggedError<DependencyFailed>()("DependencyFailed", {
+  service: Schema.String
+}) {}
+
+type Readiness = Readonly<Record<string, Deferred.Deferred<void, DependencyFailed>>>
+
+type InfraEnv = Readonly<Record<InfraName, OwnedEnv>>
 
 const isService = (node: Node): node is ServiceNode => node._tag === "Service"
+
 const isInfra = (node: Node): node is InfraNode => node._tag === "Infra"
-const envKey = (worktree: string, service: string) => `${worktree}/${service}`
-const fixedPort = /\b(localhost|127\.0\.0\.1|0\.0\.0\.0):\d{2,5}\b/
 
-const visibleToSources = (key: string) => !key.startsWith("OTEL_") && key !== "NODE_OPTIONS"
+const restartKey = (id: WorktreeId, service: ServiceName) => `${id}/${service}`
 
-const redact = (value: string) => (value.length <= 4 ? "****" : `${value.slice(0, 2)}****${value.slice(-2)}`)
+const worktreeAttributes = (worktree: Worktree) => ({
+  "forkyard.worktree": worktree.id,
+  "forkyard.project": worktree.project,
+  "forkyard.branch": worktree.branch
+})
 
-const warningFor = (key: string, value: string) =>
-  fixedPort.test(value) ? `${key} points at a fixed port. Map it in forkyard.config.ts so each worktree gets its own.` : undefined
+const serviceAttributes = (worktree: Worktree, service: ServiceNode) => ({
+  ...worktreeAttributes(worktree),
+  "forkyard.service": service.name,
+  "forkyard.kind": service.kind
+})
 
-export const mergeEnv = (
-  sourced: Readonly<Record<string, Sourced>>,
-  pristine: Readonly<Record<string, Sourced>>,
-  owned: Readonly<Record<string, Owned>>
-): ReadonlyArray<EnvVar> =>
-  [...new Set([...Object.keys(sourced), ...Object.keys(owned)])].sort().map((key) => {
-    const fromSource = sourced[key]
-    const mine = owned[key]
-    const sensitive = (fromSource?.sensitive ?? false) || looksSensitive(key)
-    const value = mine?.value ?? fromSource?.value ?? ""
-    const before = pristine[key]?.value
-    const replaced = before !== undefined && before !== value ? { replaced: sensitive ? redact(before) : before } : {}
-    if (mine) return { key, value, sensitive, source: mine.source, ...replaced }
-    const warning = warningFor(key, value)
-    return { key, value, sensitive, source: fromSource?.source ?? "?", ...replaced, ...(warning ? { warning } : {}) }
-  })
+const viewOf = (worktree: Worktree, service: ServiceNode, state: ServiceState): ServiceView => {
+  if (service.kind === "http") return { _tag: "Http", url: urlOf(worktree, service.name), state }
+  if (service.kind === "worker") return { _tag: "Worker", state }
+  return { _tag: "Task", state }
+}
 
-const shown = (vars: ReadonlyArray<EnvVar>): ReadonlyArray<EnvVar> =>
-  vars.map((entry) => (entry.sensitive ? { ...entry, value: redact(entry.value) } : entry))
+const ownedEnvFor = (service: ServiceNode, infraEnv: InfraEnv): OwnedEnv => ({
+  ...service.uses.reduce<OwnedEnv>((all, name) => ({ ...all, ...infraEnv[name] }), {}),
+  ...owned("forkyard.config", service.env)
+})
 
-export class Supervisor extends Context.Service<Supervisor, {
-  readonly run: (stack: Stack, worktree: Worktree) => Effect.Effect<never, unknown, Scope.Scope>
-  readonly envOf: (worktree: string, service: string) => Effect.Effect<ReadonlyArray<EnvVar> | undefined>
-  readonly restart: (worktree: string, service: string) => Effect.Effect<void>
-}>()("forkyard/Supervisor") {
+const reasonOf = (cause: Cause.Cause<unknown>) => Cause.pretty(cause).split("\n")[0]?.slice(0, 300) ?? "failed"
+
+export class Supervisor extends Context.Service<
+  Supervisor,
+  {
+    readonly run: (stack: Stack, worktree: Worktree) => Effect.Effect<never, unknown, Scope.Scope>
+    readonly restart: (id: WorktreeId, service: ServiceName) => Effect.Effect<void>
+  }
+>()("forkyard/Supervisor") {
   static readonly layer = (options: { readonly startupConcurrency: number; readonly otlpUrl: string }) =>
     Layer.effect(
       Supervisor,
-      Effect.gen(function*() {
+      Effect.gen(function* () {
         const infra = yield* InfraManager
         const proc = yield* Proc
-        const ports = yield* Ports
         const router = yield* Router
         const status = yield* Status
-        const fs = yield* FileSystem.FileSystem
+        const env = yield* EnvResolver
         const http = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk)
         const startup = yield* Semaphore.make(options.startupConcurrency)
-        const resolved = yield* Ref.make<Readonly<Record<string, ReadonlyArray<EnvVar>>>>({})
         const restarts = yield* PubSub.unbounded<string>()
-        const pristineCache = yield* Ref.make<Readonly<Record<string, Readonly<Record<string, Sourced>>>>>({})
 
-        const waitHealthy = (port: number, path: string) =>
-          http.get(`http://127.0.0.1:${port}${path}`).pipe(
-            Effect.retry(Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "60 seconds" }))),
-            Effect.asVoid
-          )
+        const setState = (worktree: Worktree, service: ServiceNode, state: ServiceState) =>
+          status.serviceState(worktree.id, service.name, state)
 
-        const readFile = (path: string) =>
-          fs.exists(path).pipe(
-            Effect.flatMap((present) => (present ? fs.readFileString(path).pipe(Effect.map(Option.some)) : Effect.succeedNone)),
-            Effect.mapError((error) => new EnvError({ source: path, message: error.message }))
-          )
+        const waitHealthy = (port: Port, path: string) =>
+          http
+            .get(`http://127.0.0.1:${port}${path}`)
+            .pipe(
+              Effect.retry(Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "60 seconds" }))),
+              Effect.asVoid,
+              Effect.withSpan("Supervisor.waitHealthy", { attributes: { "server.port": port, "url.path": path } })
+            )
 
-        const restartRequested = Effect.fnUntraced(function*(key: string) {
+        const restartRequested = Effect.fnUntraced(function* (worktree: Worktree, service: ServiceNode) {
           const subscription = yield* PubSub.subscribe(restarts)
-          return PubSub.take(subscription).pipe(Effect.repeat({ until: (requested) => requested === key }), Effect.asVoid)
+          const key = restartKey(worktree.id, service.name)
+
+          return PubSub.take(subscription).pipe(Effect.repeat({ until: (requested) => requested === key }), Effect.as("restart requested"))
         })
 
-        const run = Effect.fn("Supervisor.run")(function*(stack: Stack, worktree: Worktree) {
-          const worktreeAttributes = { "forkyard.worktree": worktree.id, "forkyard.project": worktree.project, "forkyard.branch": worktree.branch }
-          yield* Effect.annotateCurrentSpan({ ...worktreeAttributes, "forkyard.root": worktree.root })
-          const nodes = yield* stack.build(worktree)
-          yield* Effect.annotateCurrentSpan({ "forkyard.nodes": nodes.length })
-          yield* plan(nodes)
-          const ready = Object.fromEntries(
-            yield* Effect.forEach(nodes, (node) =>
-              Deferred.make<Readonly<Record<string, Owned>>>().pipe(Effect.map((deferred) => [nodeName(node), deferred] as const))
-            )
-          )
-          const deferredOf = (name: string) => ready[name]!
-
-          yield* Effect.forEach(
-            nodes.filter(isInfra),
-            (node) =>
-              Effect.gen(function*() {
-                const name = node.spec.name
-                yield* status.update(worktree.id, name, { kind: "infra", state: "starting", shared: node.spec.scope === "shared" })
-                const began = yield* Clock.currentTimeMillis
-                const lease = yield* infra.acquire(node.spec, worktree)
-                const took = (yield* Clock.currentTimeMillis) - began
-                yield* Metric.update(Metric.withAttributes(Metrics.infraStart, { "forkyard.infra": name, "forkyard.infra.scope": node.spec.scope }), took)
-                const url = Object.values(lease.server.urls)[0]
-                const detail = node.spec.scope === "shared" ? `shared server, ${lease.server.instance}` : "this worktree only"
-                yield* status.update(worktree.id, name, { kind: "infra", state: "ready", detail, ...(url ? { url } : {}) })
-                const owned = Object.fromEntries(Object.entries(lease.env).map(([key, value]) => [key, { value, source: `infra:${name}` }]))
-                yield* Deferred.succeed(deferredOf(name), owned)
-              }).pipe(
-                Effect.tapError((error) => status.update(worktree.id, node.spec.name, { kind: "infra", state: "failed", detail: String(error) })),
-                Effect.withSpan("Supervisor.acquireInfra", { attributes: { ...worktreeAttributes, "forkyard.infra": node.spec.name, "forkyard.infra.scope": node.spec.scope } }),
-                Effect.forkScoped
-              ),
-            { discard: true }
-          )
-
-          const sourcesFor = Effect.fn("Supervisor.sourcesFor")(function*(service: ServiceNode, owned: Readonly<Record<string, Owned>>) {
-            yield* Effect.annotateCurrentSpan({ ...worktreeAttributes, "forkyard.service": service.name, "forkyard.env.sources": service.envFrom.map((source) => source.label).join(", "), "forkyard.env.with_overrides": Object.keys(owned).length > 0 })
-            const cwd = `${worktree.root}/${service.cwd}`
-            const overrides: Env = Object.fromEntries(
-              Object.entries(owned).filter(([key]) => visibleToSources(key)).map(([key, entry]) => [key, entry.value])
-            )
-            const context: EnvLoadContext = {
-              root: worktree.root,
-              cwd,
-              overrides,
-              readFile,
-              exec: (run, dir) =>
-                proc.exec({ worktree: worktree.id, service: `${service.name}:env`, run, env: overrides, cwd: dir }).pipe(
-                  Effect.mapError((error) => new EnvError({ source: service.name, message: error.message }))
-                )
-            }
-            const loaded = yield* Effect.forEach(service.envFrom, (source) =>
-              source.load(context).pipe(
-                Effect.map((entries) => Object.fromEntries(Object.entries(entries).map(([key, entry]) => [key, { ...entry, source: source.label }]))),
-                Effect.tap((entries) => Effect.annotateCurrentSpan({ "forkyard.env.keys": Object.keys(entries).length })),
-                Effect.withSpan("EnvSource.load", { attributes: { "forkyard.env.source": source.label, "forkyard.service": service.name } })
+        const recordReady = (worktree: Worktree, service: ServiceNode, since: number) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.flatMap((now) =>
+              Metric.update(
+                Metric.withAttributes(Metrics.serviceReady, { "forkyard.service": service.name, "forkyard.project": worktree.project }),
+                now - since
               )
             )
-            return loaded.reduce<Readonly<Record<string, Sourced>>>((all, next) => ({ ...all, ...next }), {})
-          }, Effect.scoped)
+          )
 
-          const pristineFor = Effect.fn("Supervisor.pristineFor")(function*(service: ServiceNode) {
-            const key = envKey(worktree.id, service.name)
-            const cached = (yield* Ref.get(pristineCache))[key]
-            if (cached) return cached
-            const loaded = yield* sourcesFor(service, {})
-            yield* Ref.update(pristineCache, (all) => ({ ...all, [key]: loaded }))
-            return loaded
-          })
+        const recordRestart = (service: ServiceNode, reason: string) =>
+          Metric.update(
+            Metric.withAttributes(Metrics.restarts, {
+              "forkyard.service": service.name,
+              "forkyard.reason": reason.startsWith("restart") ? "requested" : "exited"
+            }),
+            1
+          )
 
-          const otelResource = [
-            `service.namespace=${worktree.id}`,
-            `forkyard.worktree=${worktree.id}`,
-            `forkyard.project=${worktree.project}`,
-            `forkyard.branch=${worktree.branch}`
-          ].join(",")
-
-          const resolveEnv = Effect.fn("Supervisor.resolveEnv")(function*(service: ServiceNode, base: Readonly<Record<string, Owned>>, port: number | undefined) {
-            yield* Effect.annotateCurrentSpan({ ...worktreeAttributes, "forkyard.service": service.name })
-            const began = yield* Clock.currentTimeMillis
-            const daemon: Readonly<Record<string, Owned>> = {
-              FORKYARD_WORKTREE: { value: worktree.id, source: "forkyard" },
-              FORKYARD_BRANCH: { value: worktree.branch, source: "forkyard" },
-              FORKYARD_SERVICE: { value: service.name, source: "forkyard" },
-              OTEL_EXPORTER_OTLP_ENDPOINT: { value: options.otlpUrl, source: "forkyard:otel" },
-              OTEL_SERVICE_NAME: { value: service.name, source: "forkyard:otel" },
-              OTEL_RESOURCE_ATTRIBUTES: { value: otelResource, source: "forkyard:otel" },
-              ...(port ? { PORT: { value: String(port), source: "forkyard" } } : {})
-            }
-            const owned = { ...base, ...daemon }
-            const [sourced, pristine] = yield* Effect.all([sourcesFor(service, owned), pristineFor(service)], { concurrency: 2 })
-            const vars = mergeEnv(sourced, pristine, owned)
-            yield* Ref.update(resolved, (all) => ({ ...all, [envKey(worktree.id, service.name)]: shown(vars) }))
-            const took = (yield* Clock.currentTimeMillis) - began
-            yield* Metric.update(Metric.withAttributes(Metrics.envResolve, { "forkyard.service": service.name }), took)
+        const acquireInfra = Effect.fn("Supervisor.acquireInfra")(
+          function* (worktree: Worktree, spec: InfraSpec) {
             yield* Effect.annotateCurrentSpan({
-              "forkyard.env.keys": vars.length,
-              "forkyard.env.replaced": vars.filter((entry) => entry.replaced !== undefined).length,
-              "forkyard.env.flagged": vars.filter((entry) => entry.warning !== undefined).map((entry) => entry.key).join(", ")
+              ...worktreeAttributes(worktree),
+              "forkyard.infra": spec.name,
+              "forkyard.infra.scope": spec.scope
             })
-            return Object.fromEntries(vars.map((entry) => [entry.key, entry.value])) as Env
-          })
+            yield* status.infra(worktree.id, spec.name, { _tag: "InfraStarting", scope: spec.scope })
 
-          const telemetry = { namespace: worktree.id, attributes: { "forkyard.worktree": worktree.id, "forkyard.project": worktree.project, "forkyard.branch": worktree.branch } }
+            const began = yield* Clock.currentTimeMillis
+            const lease = yield* infra.acquire(spec, worktree)
+            const url = Object.values(lease.server.urls)[0]
 
-          const spawnWith = (service: ServiceNode, env: Env) =>
-            proc.spawn({ worktree: worktree.id, service: service.name, run: service.run, env, cwd: `${worktree.root}/${service.cwd}`, telemetry })
+            yield* status.infra(worktree.id, spec.name, {
+              _tag: "InfraReady",
+              scope: spec.scope,
+              instance: lease.server.instance,
+              ...(url ? { url } : {})
+            })
+            yield* Metric.update(
+              Metric.withAttributes(Metrics.infraStart, { "forkyard.infra": spec.name }),
+              (yield* Clock.currentTimeMillis) - began
+            )
 
-          const runTask = Effect.fn("Supervisor.runTask", { root: true })(function*(service: ServiceNode, base: Readonly<Record<string, Owned>>) {
-            yield* Effect.annotateCurrentSpan({ ...worktreeAttributes, "forkyard.service": service.name, "forkyard.kind": service.kind })
-            yield* status.update(worktree.id, service.name, { kind: "task", state: "starting" })
-            const env = yield* resolveEnv(service, base, undefined)
-            const code = yield* startup.withPermit(
-              spawnWith(service, env).pipe(
-                Effect.tap((spawned) => status.update(worktree.id, service.name, { kind: "task", state: "starting", pid: spawned.pid, runId: spawned.runId, run: spawned.run })),
-                Effect.flatMap((spawned) => spawned.exited),
-                Effect.scoped
+            return [spec.name, owned(`infra:${spec.name}`, lease.env)] as const
+          },
+          (effect, worktree, spec) =>
+            effect.pipe(
+              Effect.tapError((error) =>
+                status.infra(worktree.id, spec.name, { _tag: "InfraFailed", scope: spec.scope, reason: String(error) })
               )
             )
+        )
+
+        const prepare = Effect.fn("Supervisor.prepare")(function* (stack: Stack, worktree: Worktree) {
+          yield* Effect.annotateCurrentSpan(worktreeAttributes(worktree))
+
+          const nodes = yield* stack.build(worktree)
+          yield* plan(nodes)
+
+          const leases = yield* Effect.forEach(nodes.filter(isInfra), (node) => acquireInfra(worktree, node.spec), {
+            concurrency: "unbounded"
+          })
+
+          return { services: nodes.filter(isService), infraEnv: Object.fromEntries(leases) as InfraEnv }
+        })
+
+        const readinessOf = (services: ReadonlyArray<ServiceNode>) =>
+          Effect.forEach(services, (service) =>
+            Deferred.make<void, DependencyFailed>().pipe(Effect.map((ready) => [service.name, ready] as const))
+          ).pipe(Effect.map((entries): Readiness => Object.fromEntries(entries)))
+
+        const awaitDependencies = (service: ServiceNode, readiness: Readiness) =>
+          Effect.forEach(service.after, (name) => Deferred.await(readiness[name]!), { discard: true })
+
+        const spawnService = (worktree: Worktree, service: ServiceNode, serviceEnv: Readonly<Record<string, string>>) =>
+          proc.spawn({
+            owner: ownerOfWorktree(worktree.id),
+            service: service.name,
+            run: service.run,
+            env: serviceEnv,
+            cwd: `${worktree.root}/${service.cwd}`,
+            telemetry: { namespace: worktree.id, attributes: worktreeAttributes(worktree) }
+          })
+
+        const serveByName = Effect.fnUntraced(function* (worktree: Worktree, service: ServiceNode, port: Port, spawned: Spawned) {
+          yield* router.expose({ host: hostOf(worktree, service.name), port })
+          yield* waitHealthy(port, service.health).pipe(Effect.raceFirst(spawned.exited))
+        })
+
+        const startService = Effect.fn("Supervisor.startService", { root: true })(function* (
+          worktree: Worktree,
+          service: ServiceNode,
+          ownedEnv: OwnedEnv
+        ) {
+          yield* Effect.annotateCurrentSpan(serviceAttributes(worktree, service))
+          yield* setState(worktree, service, { _tag: "Preparing" })
+
+          const port = service.kind === "http" ? yield* allocatePort : undefined
+          const serviceEnv = yield* env.resolve(worktree, service, {
+            ...ownedEnv,
+            ...daemonEnv(worktree, service.name, port, options.otlpUrl)
+          })
+          const spawned = yield* spawnService(worktree, service, serviceEnv)
+
+          yield* Effect.annotateCurrentSpan({ "forkyard.run": spawned.run.run, "process.pid": spawned.pid })
+          yield* setState(worktree, service, { _tag: "Starting", run: spawned.run })
+          if (port) yield* serveByName(worktree, service, port, spawned)
+
+          return spawned
+        })
+
+        const markReady = Effect.fnUntraced(function* (
+          worktree: Worktree,
+          service: ServiceNode,
+          run: RunRef,
+          ready: Deferred.Deferred<void, DependencyFailed>,
+          since: number
+        ) {
+          yield* setState(worktree, service, { _tag: "Ready", run })
+          yield* Deferred.succeed(ready, undefined)
+          yield* recordReady(worktree, service, since)
+        })
+
+        const markRestarting = Effect.fnUntraced(
+          function* (worktree: Worktree, service: ServiceNode, run: RunRef, reason: string) {
+            yield* setState(worktree, service, { _tag: "Restarting", run, reason })
+            yield* recordRestart(service, reason)
+          },
+          (effect, worktree, service, _run, reason) =>
+            effect.pipe(Effect.tap(() => Effect.logWarning(`${worktree.id}/${service.name} ${reason}, restarting`)))
+        )
+
+        const exitReason = (spawned: Spawned) => spawned.exited.pipe(Effect.map((code) => `exited with ${code}`))
+
+        const serviceRun = Effect.fnUntraced(function* (
+          worktree: Worktree,
+          service: ServiceNode,
+          ownedEnv: OwnedEnv,
+          ready: Deferred.Deferred<void, DependencyFailed>
+        ) {
+          const restartWanted = yield* restartRequested(worktree, service)
+          const began = yield* Clock.currentTimeMillis
+          const spawned = yield* startup.withPermit(startService(worktree, service, ownedEnv))
+
+          yield* markReady(worktree, service, spawned.run, ready, began)
+
+          const reason = yield* Effect.raceFirst(exitReason(spawned), restartWanted)
+          yield* markRestarting(worktree, service, spawned.run, reason)
+        }, Effect.scoped)
+
+        const keepRunning = (
+          worktree: Worktree,
+          service: ServiceNode,
+          ownedEnv: OwnedEnv,
+          ready: Deferred.Deferred<void, DependencyFailed>
+        ) =>
+          serviceRun(worktree, service, ownedEnv, ready).pipe(
+            Effect.catchCause((cause) => setState(worktree, service, { _tag: "Failed", reason: reasonOf(cause) })),
+            Effect.repeat(Schedule.spaced("1 second")),
+            Effect.andThen(Effect.never)
+          )
+
+        const runToExit = Effect.fnUntraced(function* (worktree: Worktree, service: ServiceNode, ownedEnv: OwnedEnv) {
+          const serviceEnv = yield* env.resolve(worktree, service, {
+            ...ownedEnv,
+            ...daemonEnv(worktree, service.name, undefined, options.otlpUrl)
+          })
+          const spawned = yield* spawnService(worktree, service, serviceEnv)
+
+          yield* setState(worktree, service, { _tag: "Starting", run: spawned.run })
+
+          return { run: spawned.run, code: yield* spawned.exited }
+        }, Effect.scoped)
+
+        const runTask = Effect.fn("Supervisor.runTask", { root: true })(
+          function* (worktree: Worktree, service: ServiceNode, ownedEnv: OwnedEnv, ready: Deferred.Deferred<void, DependencyFailed>) {
+            yield* Effect.annotateCurrentSpan(serviceAttributes(worktree, service))
+            yield* setState(worktree, service, { _tag: "Preparing" })
+
+            const { run, code } = yield* startup.withPermit(runToExit(worktree, service, ownedEnv))
             yield* Effect.annotateCurrentSpan({ "process.exit_code": code })
-            if (code !== 0) {
-              yield* status.update(worktree.id, service.name, { kind: "task", state: "failed", detail: `exit ${code}` })
-              return yield* new TaskFailed({ service: service.name, exitCode: code })
-            }
-            yield* status.update(worktree.id, service.name, { kind: "task", state: "done" })
-            yield* Deferred.succeed(deferredOf(service.name), {})
-          })
+            if (code !== 0) return yield* new TaskFailed({ service: service.name, exitCode: code })
 
-          const start = Effect.fn("Supervisor.start")(function*(service: ServiceNode, base: Readonly<Record<string, Owned>>) {
-            const port = service.kind === "http" ? yield* ports.allocate : undefined
-            const env = yield* resolveEnv(service, base, port)
-            const began = yield* Clock.currentTimeMillis
-            const spawned = yield* spawnWith(service, env)
-            yield* Effect.annotateCurrentSpan({ "forkyard.run": spawned.run, "process.pid": spawned.pid, ...(port ? { "server.port": port, "url.full": urlOf(worktree, service.name) } : {}) })
-            yield* status.update(worktree.id, service.name, { kind: service.kind, state: "starting", pid: spawned.pid, runId: spawned.runId, run: spawned.run })
-            if (!port) return spawned
-            yield* router.expose({ host: hostOf(worktree, service.name), port })
-            yield* waitHealthy(port, service.health ?? "/health").pipe(
-              Effect.raceFirst(spawned.exited),
-              Effect.withSpan("Supervisor.waitHealthy", { attributes: { "forkyard.service": service.name, "server.port": port, "url.path": service.health ?? "/health" } })
+            yield* setState(worktree, service, { _tag: "Done", run })
+            yield* Deferred.succeed(ready, undefined)
+          },
+          (effect, worktree, service, _ownedEnv, ready) =>
+            effect.pipe(
+              Effect.tapCause((cause) =>
+                Effect.all(
+                  [
+                    setState(worktree, service, { _tag: "Failed", reason: reasonOf(cause) }),
+                    Deferred.fail(ready, new DependencyFailed({ service: service.name }))
+                  ],
+                  { discard: true }
+                )
+              )
             )
-            const took = (yield* Clock.currentTimeMillis) - began
-            yield* Metric.update(Metric.withAttributes(Metrics.serviceReady, { "forkyard.service": service.name, "forkyard.project": worktree.project }), took)
-            return spawned
-          })
+        )
 
-          const runOnce = Effect.fn("Supervisor.runOnce", { root: true })(function*(service: ServiceNode, base: Readonly<Record<string, Owned>>) {
-            yield* Effect.annotateCurrentSpan({ ...worktreeAttributes, "forkyard.service": service.name, "forkyard.kind": service.kind })
-            const key = envKey(worktree.id, service.name)
-            const restartWanted = yield* restartRequested(key)
-            const spawned = yield* startup.withPermit(start(service, base))
-            yield* Deferred.succeed(deferredOf(service.name), {})
-            yield* status.update(worktree.id, service.name, { kind: service.kind, state: "ready" })
-            const outcome = yield* Effect.raceFirst(
-              spawned.exited.pipe(Effect.map((code) => `exited with ${code}`)),
-              restartWanted.pipe(Effect.as("restart requested"))
+        const supervise = Effect.fnUntraced(
+          function* (worktree: Worktree, service: ServiceNode, infraEnv: InfraEnv, readiness: Readiness) {
+            const ready = readiness[service.name]!
+            yield* status.service(worktree.id, service.name, viewOf(worktree, service, { _tag: "Waiting" }))
+            yield* awaitDependencies(service, readiness)
+
+            const ownedEnv = ownedEnvFor(service, infraEnv)
+            if (service.kind === "task") return yield* runTask(worktree, service, ownedEnv, ready)
+            return yield* keepRunning(worktree, service, ownedEnv, ready)
+          },
+          (effect, worktree, service, _infraEnv, readiness) =>
+            effect.pipe(
+              Effect.catchTag("DependencyFailed", (failed) =>
+                Effect.all(
+                  [
+                    setState(worktree, service, { _tag: "Failed", reason: `${failed.service} failed` }),
+                    Deferred.fail(readiness[service.name]!, new DependencyFailed({ service: service.name }))
+                  ],
+                  { discard: true }
+                )
+              )
             )
-            yield* status.update(worktree.id, service.name, { kind: service.kind, state: "crashed", detail: outcome })
-            yield* Effect.annotateCurrentSpan({ "forkyard.outcome": outcome })
-            yield* Metric.update(Metric.withAttributes(Metrics.restarts, { "forkyard.service": service.name, "forkyard.reason": outcome.startsWith("restart") ? "requested" : "exited" }), 1)
-            yield* Effect.logWarning(`${worktree.id}/${service.name} ${outcome}, restarting`)
-          }, Effect.scoped)
+        )
 
-          const supervise = Effect.fn("Supervisor.supervise")(function*(service: ServiceNode) {
-            yield* Effect.annotateCurrentSpan({ ...worktreeAttributes, "forkyard.service": service.name })
-            const url = service.kind === "http" ? { url: urlOf(worktree, service.name) } : {}
-            yield* status.update(worktree.id, service.name, { kind: service.kind, state: "waiting", ...url })
-            const infraEnvs = yield* Effect.forEach(service.uses, (name) => Deferred.await(deferredOf(name)))
-            yield* Effect.forEach(service.after, (name) => Deferred.await(deferredOf(name)), { discard: true })
-            const config = Object.fromEntries(Object.entries(service.env).map(([key, value]) => [key, { value, source: "forkyard.config" }]))
-            const base = [...infraEnvs, config].reduce<Readonly<Record<string, Owned>>>((all, next) => ({ ...all, ...next }), {})
-            if (service.kind === "task") return yield* runTask(service, base)
-            return yield* runOnce(service, base).pipe(
-              Effect.catchCause((cause) =>
-                status.update(worktree.id, service.name, { kind: service.kind, state: "crashed", detail: String(cause).slice(0, 300) })
-              ),
-              Effect.repeat(Schedule.spaced("1 second")),
-              Effect.andThen(Effect.never)
-            )
-          })
+        const run = Effect.fnUntraced(function* (stack: Stack, worktree: Worktree): Effect.fn.Return<never, unknown, Scope.Scope> {
+          const { services, infraEnv } = yield* prepare(stack, worktree)
+          const readiness = yield* readinessOf(services)
 
-          yield* Effect.forEach(nodes.filter(isService), (service) => Effect.forkScoped(supervise(service)), {
+          yield* Effect.addFinalizer(() => env.forget(worktree.id))
+          yield* Effect.forEach(services, (service) => Effect.forkScoped(supervise(worktree, service, infraEnv, readiness)), {
             discard: true
           })
-          const forget = <A>(all: Readonly<Record<string, A>>) =>
-            Object.fromEntries(Object.entries(all).filter(([key]) => !key.startsWith(`${worktree.id}/`)))
-          yield* Effect.addFinalizer(() => Ref.update(resolved, forget).pipe(Effect.andThen(Ref.update(pristineCache, forget))))
+
           return yield* Effect.never
         })
 
         return Supervisor.of({
           run,
-          envOf: (worktree, service) => Ref.get(resolved).pipe(Effect.map((all) => all[envKey(worktree, service)])),
-          restart: (worktree, service) => PubSub.publish(restarts, envKey(worktree, service)).pipe(Effect.asVoid)
+          restart: (id, service) => PubSub.publish(restarts, restartKey(id, service)).pipe(Effect.asVoid)
         })
       })
     )

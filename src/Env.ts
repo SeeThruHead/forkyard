@@ -1,0 +1,169 @@
+import { Clock, Context, Effect, FileSystem, Layer, Metric, Option, Ref } from "effect"
+import { EnvError, type EnvEntry, type EnvLoadContext, type EnvSource, looksSensitive } from "./EnvSource.ts"
+import { ownerOfWorktree, type Port, type ServiceName, type WorktreeId } from "./Ids.ts"
+import * as Metrics from "./Metrics.ts"
+import type { EnvVar } from "./Model.ts"
+import { Proc } from "./Proc.ts"
+import type { Env, ServiceNode, Worktree } from "./Stack.ts"
+
+export type Owned = { readonly value: string; readonly source: string }
+
+export type OwnedEnv = Readonly<Record<string, Owned>>
+
+type Sourced = EnvEntry & { readonly source: string }
+
+type SourcedEnv = Readonly<Record<string, Sourced>>
+
+const fixedPort = /\b(localhost|127\.0\.0\.1|0\.0\.0\.0):\d{2,5}\b/
+
+const redact = (value: string) => (value.length <= 4 ? "****" : `${value.slice(0, 2)}****${value.slice(-2)}`)
+
+const warningFor = (key: string, value: string) =>
+  fixedPort.test(value) ? `${key} points at a fixed port. Map it in forkyard.config.ts so each worktree gets its own.` : undefined
+
+const visibleToSources = (key: string) => !key.startsWith("OTEL_") && key !== "NODE_OPTIONS"
+
+const keyOf = (id: WorktreeId, service: ServiceName) => `${id}/${service}`
+
+export const owned = (source: string, env: Env): OwnedEnv =>
+  Object.fromEntries(Object.entries(env).map(([key, value]) => [key, { value, source }]))
+
+export const daemonEnv = (worktree: Worktree, service: ServiceName, port: Port | undefined, otlpUrl: string): OwnedEnv => ({
+  ...owned("forkyard", {
+    FORKYARD_WORKTREE: worktree.id,
+    FORKYARD_BRANCH: worktree.branch,
+    FORKYARD_SERVICE: service,
+    ...(port ? { PORT: String(port) } : {})
+  }),
+  ...owned("forkyard:otel", {
+    OTEL_EXPORTER_OTLP_ENDPOINT: otlpUrl,
+    OTEL_SERVICE_NAME: service,
+    OTEL_RESOURCE_ATTRIBUTES: `service.namespace=${worktree.id},forkyard.worktree=${worktree.id},forkyard.project=${worktree.project},forkyard.branch=${worktree.branch}`
+  })
+})
+
+export const mergeEnv = (sourced: SourcedEnv, pristine: SourcedEnv, ownedEnv: OwnedEnv): ReadonlyArray<EnvVar> =>
+  [...new Set([...Object.keys(sourced), ...Object.keys(ownedEnv)])].sort().map((key) => {
+    const fromSource = sourced[key]
+    const mine = ownedEnv[key]
+    const sensitive = (fromSource?.sensitive ?? false) || looksSensitive(key)
+    const value = mine?.value ?? fromSource?.value ?? ""
+    const before = pristine[key]?.value
+    const replaced = before !== undefined && before !== value ? { replaced: sensitive ? redact(before) : before } : {}
+
+    if (mine) return { key, value, sensitive, source: mine.source, ...replaced }
+
+    const warning = warningFor(key, value)
+    return { key, value, sensitive, source: fromSource?.source ?? "?", ...replaced, ...(warning ? { warning } : {}) }
+  })
+
+const shown = (vars: ReadonlyArray<EnvVar>): ReadonlyArray<EnvVar> =>
+  vars.map((entry) => (entry.sensitive ? { ...entry, value: redact(entry.value) } : entry))
+
+const valuesOf = (vars: ReadonlyArray<EnvVar>): Env => Object.fromEntries(vars.map((entry) => [entry.key, entry.value]))
+
+const merged = (loaded: ReadonlyArray<SourcedEnv>) => loaded.reduce<SourcedEnv>((all, next) => ({ ...all, ...next }), {})
+
+const labelled =
+  (source: EnvSource) =>
+  (entries: Readonly<Record<string, EnvEntry>>): SourcedEnv =>
+    Object.fromEntries(Object.entries(entries).map(([key, entry]) => [key, { ...entry, source: source.label }]))
+
+export class EnvResolver extends Context.Service<
+  EnvResolver,
+  {
+    readonly resolve: (worktree: Worktree, service: ServiceNode, ownedEnv: OwnedEnv) => Effect.Effect<Env, EnvError>
+    readonly report: (id: WorktreeId, service: ServiceName) => Effect.Effect<ReadonlyArray<EnvVar> | undefined>
+    readonly forget: (id: WorktreeId) => Effect.Effect<void>
+  }
+>()("forkyard/Env") {
+  static readonly layer = Layer.effect(
+    EnvResolver,
+    Effect.gen(function* () {
+      const proc = yield* Proc
+      const fs = yield* FileSystem.FileSystem
+      const reports = yield* Ref.make<Readonly<Record<string, ReadonlyArray<EnvVar>>>>({})
+      const pristineCache = yield* Ref.make<Readonly<Record<string, SourcedEnv>>>({})
+
+      const readFile = (path: string) =>
+        fs.exists(path).pipe(
+          Effect.flatMap((present) => (present ? fs.readFileString(path).pipe(Effect.map(Option.some)) : Effect.succeedNone)),
+          Effect.mapError((error) => new EnvError({ source: path, message: error.message }))
+        )
+
+      const loadContext = (worktree: Worktree, service: ServiceNode, ownedEnv: OwnedEnv): EnvLoadContext => {
+        const overrides: Env = Object.fromEntries(
+          Object.entries(ownedEnv)
+            .filter(([key]) => visibleToSources(key))
+            .map(([key, entry]) => [key, entry.value])
+        )
+        const exec: EnvLoadContext["exec"] = (run, cwd) =>
+          proc
+            .exec({ owner: ownerOfWorktree(worktree.id), service: `${service.name}:env`, run, env: overrides, cwd })
+            .pipe(Effect.mapError((error) => new EnvError({ source: service.name, message: error.message })))
+
+        return { root: worktree.root, cwd: `${worktree.root}/${service.cwd}`, overrides, readFile, exec }
+      }
+
+      const loadSource = (context: EnvLoadContext, service: ServiceNode) => (source: EnvSource) =>
+        source
+          .load(context)
+          .pipe(
+            Effect.map(labelled(source)),
+            Effect.withSpan("EnvSource.load", { attributes: { "forkyard.env.source": source.label, "forkyard.service": service.name } })
+          )
+
+      const loadSources = Effect.fn("Env.loadSources")(function* (worktree: Worktree, service: ServiceNode, ownedEnv: OwnedEnv) {
+        const context = loadContext(worktree, service, ownedEnv)
+        const loaded = yield* Effect.forEach(service.envFrom, loadSource(context, service))
+
+        return merged(loaded)
+      }, Effect.scoped)
+
+      const pristine = Effect.fn("Env.pristine")(function* (worktree: Worktree, service: ServiceNode) {
+        const key = keyOf(worktree.id, service.name)
+        const cached = (yield* Ref.get(pristineCache))[key]
+        if (cached) return cached
+
+        const loaded = yield* loadSources(worktree, service, {})
+        yield* Ref.update(pristineCache, (all) => ({ ...all, [key]: loaded }))
+
+        return loaded
+      })
+
+      const recordTiming = (service: ServiceNode, since: number) =>
+        Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) =>
+            Metric.update(Metric.withAttributes(Metrics.envResolve, { "forkyard.service": service.name }), now - since)
+          )
+        )
+
+      const resolve = Effect.fn("Env.resolve")(function* (worktree: Worktree, service: ServiceNode, ownedEnv: OwnedEnv) {
+        yield* Effect.annotateCurrentSpan({ "forkyard.worktree": worktree.id, "forkyard.service": service.name })
+        const began = yield* Clock.currentTimeMillis
+
+        const [sourced, before] = yield* Effect.all([loadSources(worktree, service, ownedEnv), pristine(worktree, service)], {
+          concurrency: 2
+        })
+        const vars = mergeEnv(sourced, before, ownedEnv)
+
+        yield* Ref.update(reports, (all) => ({ ...all, [keyOf(worktree.id, service.name)]: shown(vars) }))
+        yield* recordTiming(service, began)
+
+        return valuesOf(vars)
+      })
+
+      const forget = (id: WorktreeId) => {
+        const keep = <A>(all: Readonly<Record<string, A>>) =>
+          Object.fromEntries(Object.entries(all).filter(([key]) => !key.startsWith(`${id}/`)))
+        return Ref.update(reports, keep).pipe(Effect.andThen(Ref.update(pristineCache, keep)))
+      }
+
+      return EnvResolver.of({
+        resolve,
+        report: (id, service) => Ref.get(reports).pipe(Effect.map((all) => all[keyOf(id, service)])),
+        forget
+      })
+    })
+  )
+}

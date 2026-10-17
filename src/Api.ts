@@ -1,0 +1,59 @@
+import { Effect, Path, Record, Stream } from "effect"
+import { EnvResolver } from "./Env.ts"
+import { AbsolutePath, ownerOfWorktree, type RunId } from "./Ids.ts"
+import { InfraManager } from "./InfraManager.ts"
+import { ForkyardError, ForkyardRpcs } from "./Protocol.ts"
+import { Router } from "./Router.ts"
+import { Runs } from "./Runs.ts"
+import { Status } from "./Status.ts"
+import { Supervisor } from "./Supervisor.ts"
+import { Worktrees } from "./Worktrees.ts"
+
+export const layer = ForkyardRpcs.toLayer(
+  Effect.gen(function* () {
+    const worktrees = yield* Worktrees
+    const supervisor = yield* Supervisor
+    const status = yield* Status
+    const runs = yield* Runs
+    const router = yield* Router
+    const infra = yield* InfraManager
+    const env = yield* EnvResolver
+    const path = yield* Path.Path
+
+    const runLogSource = Effect.fn("Api.runLog")(function* (runId: RunId) {
+      const history = yield* runs.lines(runId)
+      if (yield* runs.ended(runId)) return Stream.fromIterable(history)
+
+      const last = history.at(-1)?.seq ?? -1
+      const live = status.logs.pipe(
+        Stream.filter((line) => line.runId === runId && line.seq > last),
+        Stream.map((line) => ({ runId: line.runId, seq: line.seq, at: line.at, line: line.line }))
+      )
+      return Stream.fromIterable(history).pipe(Stream.concat(live))
+    })
+
+    const runLog = (runId: RunId) => Stream.unwrap(runLogSource(runId))
+
+    const envReport = Effect.fn("Api.env")(function* (id: Parameters<typeof env.report>[0], service: Parameters<typeof env.report>[1]) {
+      const report = yield* env.report(id, service)
+      if (!report) return yield* new ForkyardError({ message: `${id}/${service} has no resolved env yet` })
+      return report
+    })
+
+    return ForkyardRpcs.of({
+      Up: ({ root, branch, stackFile }) =>
+        worktrees
+          .up({ root, branch, stackFile: stackFile ?? AbsolutePath.make(path.join(root, "forkyard.config.ts")) })
+          .pipe(Effect.map((id) => ({ id }))),
+      Down: ({ id }) => worktrees.down(id),
+      Status: () => status.changes,
+      Logs: ({ id }) => status.logs.pipe(Stream.filter((line) => line.owner === ownerOfWorktree(id))),
+      Env: ({ id, service }) => envReport(id, service),
+      Restart: ({ id, service }) => supervisor.restart(id, service),
+      Runs: ({ owner, service }) => runs.list(owner, service),
+      RunLog: ({ runId }) => runLog(runId),
+      Routes: () => router.routes.pipe(Effect.map(Record.map((route) => route.port))),
+      Infra: () => infra.running
+    })
+  })
+)

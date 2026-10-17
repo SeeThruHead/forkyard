@@ -1,4 +1,5 @@
 import { Effect } from "effect"
+import { InfraName } from "../Ids.ts"
 import { cmd, type Env, type InfraServer, type InfraSpec, type InfraTools, type Worktree } from "../Stack.ts"
 import { port, readyOrExit } from "./Shared.ts"
 
@@ -11,9 +12,9 @@ type Options = {
 }
 
 export const native = (options: Options): InfraSpec => {
-  const name = options.name ?? "redis"
+  const name = InfraName.make(options.name ?? "redis")
 
-  const start = Effect.fn("Redis.start")(function*(_instance: string, tools: InfraTools) {
+  const start = Effect.fn("Redis.start")(function* (_instance: string, tools: InfraTools) {
     const listen = yield* port(name)
     yield* Effect.annotateCurrentSpan({ "db.system.name": "redis", "server.port": listen })
     const started = yield* tools.spawn({
@@ -21,12 +22,14 @@ export const native = (options: Options): InfraSpec => {
       run: cmd("redis-server", "--port", String(listen), "--bind", "127.0.0.1", "--save", "", "--appendonly", "no"),
       env: {}
     })
-    const ping = tools.exec({ name: "redis-cli", run: cmd("redis-cli", "-p", String(listen), "ping"), env: {}, cwd: "/" }).pipe(Effect.scoped)
+    const ping = tools
+      .exec({ name: "redis-cli", run: cmd("redis-cli", "-p", String(listen), "ping"), env: {}, cwd: "/" })
+      .pipe(Effect.scoped)
     yield* readyOrExit(name, started, ping, "15 seconds")
     return { port: listen, env: {}, routes: {} }
   })
 
-  const tenant = Effect.fn("Redis.tenant")(function*(server: InfraServer, worktree: Worktree) {
+  const tenant = Effect.fn("Redis.tenant")(function* (server: InfraServer, worktree: Worktree) {
     const redis: RedisTenant = {
       url: `redis://127.0.0.1:${server.port}`,
       prefix: options.scope === "shared" ? `${worktree.id}:` : ""

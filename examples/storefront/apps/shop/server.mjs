@@ -10,9 +10,17 @@ const get = async (path) => {
 }
 
 const home = async (response) => {
-  const [about, products, orders, giftCards] = await Promise.all([get("/api/info"), get("/api/products"), get("/api/orders"), get("/api/gift-cards")])
+  const [about, products, orders, giftCards] = await Promise.all([
+    get("/api/info"),
+    get("/api/products"),
+    get("/api/orders"),
+    get("/api/gift-cards")
+  ])
   const giftCardSection = giftCards
-    ? `<h2>Gift cards <span class="muted">(only on this branch)</span></h2>${table(["Code", "Balance", "Status"], giftCards.map((card) => [card.code, `$${card.balance}`, card.status]))}`
+    ? `<h2>Gift cards <span class="muted">(only on this branch)</span></h2>${table(
+        ["Code", "Balance", "Status"],
+        giftCards.map((card) => [card.code, `$${card.balance}`, card.status])
+      )}`
     : ""
   const options = products.map((product) => `<option value="${product.id}">${escape(product.name)}</option>`).join("")
   html(
@@ -31,9 +39,15 @@ const home = async (response) => {
       ])}
       <h2>Place an order</h2>
       <form method="post" action="/orders"><select name="productId">${options}</select><input name="note" placeholder="A note, stored in this worktree's database"><button>Order</button></form>
-      ${table(["#", "Product", "Note", "Placed"], orders.map((order) => [order.id, order.product, order.note, new Date(order.created_at).toLocaleTimeString()]))}
+      ${table(
+        ["#", "Product", "Note", "Placed"],
+        orders.map((order) => [order.id, order.product, order.note, new Date(order.created_at).toLocaleTimeString()])
+      )}
       ${giftCardSection}
-      <h2>Products</h2>${table(["SKU", "Product", "Price", "Stock"], products.map((product) => [product.sku, product.name, `$${product.price}`, product.stock]))}
+      <h2>Products</h2>${table(
+        ["SKU", "Product", "Price", "Stock"],
+        products.map((product) => [product.sku, product.name, `$${product.price}`, product.stock])
+      )}
       <p class="muted">Server-rendered by the shop; every value above came from the api at <code>${escape(api)}</code>.</p>`
     })
   )

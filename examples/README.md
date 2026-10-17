@@ -2,11 +2,11 @@
 
 Three small repos with different tooling. Each describes itself in a `forkyard.config.ts`; forkyard knows nothing else about them.
 
-| Folder | Runtime | Env comes from | Data |
-|---|---|---|---|
-| `storefront/` | Node, pnpm workspace | varlock `.env.schema`, secrets from a stand-in secret manager | shared Postgres, database per branch cloned from a golden template; a Temporal server per branch |
-| `bun-dotenv/` | Bun workspaces | `.env` then `.env.local` | shared Postgres, empty database per branch plus a migrate task; a Redis process per branch |
-| `python-compose/` | Python standard library | `docker-compose.yml` (`environment`, `env_file`, `${VAR:-default}`) | a SQLite file inside each checkout |
+| Folder            | Runtime                 | Env comes from                                                      | Data                                                                                             |
+| ----------------- | ----------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `storefront/`     | Node, pnpm workspace    | varlock `.env.schema`, secrets from a stand-in secret manager       | shared Postgres, database per branch cloned from a golden template; a Temporal server per branch |
+| `bun-dotenv/`     | Bun workspaces          | `.env` then `.env.local`                                            | shared Postgres, empty database per branch plus a migrate task; a Redis process per branch       |
+| `python-compose/` | Python standard library | `docker-compose.yml` (`environment`, `env_file`, `${VAR:-default}`) | a SQLite file inside each checkout                                                               |
 
 ## Run one
 

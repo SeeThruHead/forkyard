@@ -1,7 +1,13 @@
 {
   "name": "forkyard",
   "private": true,
+  "bin": {
+    "forkyard": "bin/forkyard"
+  },
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p dashboard",
     "test": "vitest run",
@@ -10,7 +16,13 @@
     "build:dashboard": "bun build dashboard/src/main.tsx --outdir dashboard/dist --target browser --minify && cp dashboard/index.html dashboard/dist/index.html",
     "tour": "node --experimental-strip-types --no-warnings harness/tour.ts",
     "golden-demo": "node --experimental-strip-types --no-warnings harness/golden-demo.ts",
-    "postinstall": "ln -sfn .. node_modules/forkyard"
+    "postinstall": "ln -sfn .. node_modules/forkyard",
+    "lint": "oxlint",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test",
+    "lint:fixtures": "oxlint -c test/lint/fixtures.oxlintrc.json test/lint/fixtures",
+    "prepare": "lefthook install"
   },
   "dependencies": {
     "@effect/atom-react": "4.0.0",
@@ -26,6 +38,10 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "lefthook": "2.2.2",
+    "oxfmt": "0.73.0",
+    "oxlint": "1.88.0",
+    "rust-just": "1.59.0",
     "typescript": "^5.9.0",
     "vitest": "^5.0.5"
   },
@@ -33,11 +49,5 @@
     "overrides": {
       "@effect/platform-node-shared": "4.0.0"
     }
-  },
-  "exports": {
-    ".": "./src/index.ts"
-  },
-  "bin": {
-    "forkyard": "bin/forkyard"
   }
 }

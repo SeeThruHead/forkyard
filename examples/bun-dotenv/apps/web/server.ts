@@ -20,7 +20,10 @@ const home = async () => {
       ["analytics (not mapped)", process.env.ANALYTICS_URL]
     ])}
     <h2>Shorten a link</h2><form method="post" action="/links"><input name="target" placeholder="https://example.com/some/long/path" required><button>Shorten</button></form>
-    <h2>Links</h2>${table(["Code", "Target", "Clicks", "Checked by worker"], links.map((link: Record<string, unknown>) => [link.code, link.target, link.clicks, link.checked_by ?? "waiting"]))}
+    <h2>Links</h2>${table(
+      ["Code", "Target", "Clicks", "Checked by worker"],
+      links.map((link: Record<string, unknown>) => [link.code, link.target, link.clicks, link.checked_by ?? "waiting"])
+    )}
     <p class="muted">Rendered by Bun; data from the api at <code>${escape(api)}</code>.</p>`
   })
 }
@@ -33,7 +36,11 @@ Bun.serve({
     "/links": {
       POST: async (request) => {
         const form = await request.formData()
-        await fetch(`${api}/api/links`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target: form.get("target") }) })
+        await fetch(`${api}/api/links`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ target: form.get("target") })
+        })
         return Response.redirect("/", 303)
       }
     },

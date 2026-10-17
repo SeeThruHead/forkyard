@@ -15,15 +15,13 @@ type StackConfig = typeof StackConfig.Type
 
 export const stackConfig = Atom.make<StackConfig>({})
 
-export const fingerprint = Atom.family((name: string) =>
-  Atom.make((get) => JSON.stringify(get(stackConfig)[name] ?? null))
-)
+export const fingerprint = Atom.family((name: string) => Atom.make((get) => JSON.stringify(get(stackConfig)[name] ?? null)))
 
 const devRuntime = Atom.runtime(NodeServices.layer)
 
 export const service = Atom.family((name: string) =>
   devRuntime.atom((get) =>
-    Effect.gen(function*() {
+    Effect.gen(function* () {
       get(fingerprint(name))
       const config = get.once(stackConfig)[name]
       if (!config) return "absent" as const
@@ -37,7 +35,7 @@ export const service = Atom.family((name: string) =>
   )
 )
 
-export const watchStackFile = Effect.fn("watchStackFile")(function*(file: string) {
+export const watchStackFile = Effect.fn("watchStackFile")(function* (file: string) {
   const fs = yield* FileSystem.FileSystem
   const registry = yield* AtomRegistry.AtomRegistry
   const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(StackConfig))
@@ -47,10 +45,14 @@ export const watchStackFile = Effect.fn("watchStackFile")(function*(file: string
     Effect.catch((error) => Effect.logWarning("stack file rejected, keeping previous config", error))
   )
   yield* load
-  yield* fs.watch(file).pipe(Stream.debounce("100 millis"), Stream.runForEach(() => load), Effect.forkScoped)
+  yield* fs.watch(file).pipe(
+    Stream.debounce("100 millis"),
+    Stream.runForEach(() => load),
+    Effect.forkScoped
+  )
 })
 
-export const mountServices = Effect.fn("mountServices")(function*(names: ReadonlyArray<string>) {
+export const mountServices = Effect.fn("mountServices")(function* (names: ReadonlyArray<string>) {
   const registry = yield* AtomRegistry.AtomRegistry
   yield* Effect.forEach(names, (name) => AtomRegistry.mount(registry, service(name)), { discard: true })
 })

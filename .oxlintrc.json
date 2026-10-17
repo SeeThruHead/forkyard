@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "jsPlugins": ["./lint/forkyard.js"],
+  "categories": {
+    "correctness": "error"
+  },
+  "ignorePatterns": [
+    "run/**",
+    "dashboard/dist/**",
+    "examples/storefront/apps/**",
+    "examples/storefront/packages/**",
+    "examples/storefront/scripts/**",
+    "examples/bun-dotenv/apps/**",
+    "examples/bun-dotenv/packages/**",
+    "examples/architectures/**",
+    "examples/checks/**",
+    "test/lint/**"
+  ],
+  "rules": {
+    "no-nested-ternary": "error",
+    "prefer-const": "error",
+    "no-param-reassign": "error",
+    "no-else-return": "error",
+    "typescript/consistent-type-definitions": ["error", "type"],
+    "forkyard/no-gen-wrapper": "error"
+  },
+  "overrides": [
+    {
+      "files": ["src/**"],
+      "rules": {
+        "forkyard/scoped-processes": "error",
+        "forkyard/flat-orchestration": "error",
+        "forkyard/edges-only": "error",
+        "forkyard/branded-ids": "error"
+      }
+    },
+    {
+      "files": ["examples/*/forkyard.config.ts"],
+      "rules": {
+        "forkyard/scoped-processes": "error"
+      }
+    }
+  ]
+}

@@ -3,13 +3,9 @@ import { Effect } from "effect"
 
 export default make(
   "storefront",
-  Effect.gen(function*() {
-    const postgres = yield* Infra(
-      Postgres.docker({ scope: "shared", golden: { migrate: node("packages/db/migrate.mjs") } })
-    )
-    const temporal = yield* Infra(
-      Temporal.dev({ scope: "worktree", namespaces: ["orders", "fulfillment", "notifications"] })
-    )
+  Effect.gen(function* () {
+    const postgres = yield* Infra(Postgres.docker({ scope: "shared", golden: { migrate: node("packages/db/migrate.mjs") } }))
+    const temporal = yield* Infra(Temporal.dev({ scope: "worktree", namespaces: ["orders", "fulfillment", "notifications"] }))
 
     const routing = {
       API_URL: yield* url("api"),

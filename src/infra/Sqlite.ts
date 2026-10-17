@@ -1,4 +1,5 @@
 import { Effect } from "effect"
+import { InfraName } from "../Ids.ts"
 import { cmd, type Env, type InfraServer, type InfraSpec, type InfraTools, type Worktree } from "../Stack.ts"
 
 type Options = {
@@ -8,9 +9,9 @@ type Options = {
 }
 
 export const file = (options: Options = {}): InfraSpec => {
-  const name = options.name ?? "sqlite"
+  const name = InfraName.make(options.name ?? "sqlite")
 
-  const tenant = Effect.fn("Sqlite.tenant")(function*(_server: InfraServer, worktree: Worktree, tools: InfraTools) {
+  const tenant = Effect.fn("Sqlite.tenant")(function* (_server: InfraServer, worktree: Worktree, tools: InfraTools) {
     const dir = `${worktree.root}/.forkyard`
     yield* tools.exec({ name: "mkdir", run: cmd("mkdir", "-p", dir), env: {}, cwd: "/" }).pipe(Effect.scoped)
     const path = `${dir}/${options.file ?? `${name}.sqlite`}`
@@ -18,5 +19,5 @@ export const file = (options: Options = {}): InfraSpec => {
     return options.env?.({ path }) ?? { DATABASE_PATH: path }
   })
 
-  return { name, scope: "worktree", start: () => Effect.succeed({ port: 0, env: {}, routes: {} }), tenant }
+  return { name, scope: "worktree", start: () => Effect.succeed({ port: undefined, env: {}, routes: {} }), tenant }
 }

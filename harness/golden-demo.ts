@@ -9,26 +9,28 @@ const url = (database: string) => Redacted.make(`postgres://postgres:x@127.0.0.1
 const onDatabase = <A, E>(database: string, effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
   effect.pipe(Effect.provide(PgClient.layer({ url: url(database) })))
 
-const timed = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
-  Effect.gen(function*() {
-    const start = yield* Clock.currentTimeMillis
-    const result = yield* effect
-    yield* Console.log(`    ${label}: ${(yield* Clock.currentTimeMillis) - start} ms`)
-    return result
-  })
+const timed = Effect.fn("timed")(function* <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) {
+  const start = yield* Clock.currentTimeMillis
+  const result = yield* effect
+
+  yield* Console.log(`    ${label}: ${(yield* Clock.currentTimeMillis) - start} ms`)
+  return result
+})
 
 const columns = (database: string) =>
   onDatabase(
     database,
     SqlClient.SqlClient.pipe(
-      Effect.flatMap((sql) => sql<{ readonly column_name: string }>`
+      Effect.flatMap(
+        (sql) => sql<{ readonly column_name: string }>`
         SELECT column_name FROM information_schema.columns WHERE table_name = 'customers' ORDER BY ordinal_position
-      `),
+      `
+      ),
       Effect.map((rows) => rows.map((row) => row.column_name).join(", "))
     )
   )
 
-const program = Effect.gen(function*() {
+const program = Effect.gen(function* () {
   const golden = yield* Golden
   const sql = yield* SqlClient.SqlClient
 
@@ -37,25 +39,32 @@ const program = Effect.gen(function*() {
   yield* sql`CREATE DATABASE shop_golden`
   yield* onDatabase(
     "shop_golden",
-    SqlClient.SqlClient.pipe(Effect.flatMap((db) =>
-      Effect.all([
-        db`CREATE TABLE customers (id int PRIMARY KEY, email text)`,
-        db`INSERT INTO customers SELECT g, 'user' || g || '@example.com' FROM generate_series(1, 200000) g`
-      ])
-    ))
+    SqlClient.SqlClient.pipe(
+      Effect.flatMap((db) =>
+        Effect.all([
+          db`CREATE TABLE customers (id int PRIMARY KEY, email text)`,
+          db`INSERT INTO customers SELECT g, 'user' || g || '@example.com' FROM generate_series(1, 200000) g`
+        ])
+      )
+    )
   )
   yield* sql.unsafe(`COMMENT ON DATABASE shop_golden IS 'commit-1'`)
   yield* sql`ALTER DATABASE shop_golden WITH ALLOW_CONNECTIONS false IS_TEMPLATE true`
-  yield* Console.log(`    golden at ${yield* golden.commit}, columns: ${yield* columns("shop_golden").pipe(Effect.orElseSucceed(() => "(no connections allowed)"))}`)
+  yield* Console.log(
+    `    golden at ${yield* golden.commit}, columns: ${yield* columns("shop_golden").pipe(Effect.orElseSucceed(() => "(no connections allowed)"))}`
+  )
 
   yield* Console.log("== two worktrees provision at once (read lock, run concurrently)")
-  yield* timed(
-    "wt-a + wt-b cloned",
-    Effect.all([golden.provision("wt-a"), golden.provision("wt-b")], { concurrency: "unbounded" })
-  )
+  yield* timed("wt-a + wt-b cloned", Effect.all([golden.provision("wt-a"), golden.provision("wt-b")], { concurrency: "unbounded" }))
   yield* onDatabase("shop_wt_wt_a", SqlClient.SqlClient.pipe(Effect.flatMap((db) => db`DELETE FROM customers WHERE id > 10`)))
   const count = (database: string) =>
-    onDatabase(database, SqlClient.SqlClient.pipe(Effect.flatMap((db) => db<{ readonly n: number }>`SELECT count(*)::int AS n FROM customers`), Effect.map((rows) => rows[0]?.n)))
+    onDatabase(
+      database,
+      SqlClient.SqlClient.pipe(
+        Effect.flatMap((db) => db<{ readonly n: number }>`SELECT count(*)::int AS n FROM customers`),
+        Effect.map((rows) => rows[0]?.n)
+      )
+    )
   yield* Console.log(`    after deleting rows in wt-a: wt-a has ${yield* count("shop_wt_wt_a")}, wt-b has ${yield* count("shop_wt_wt_b")}`)
 
   yield* Console.log("== main gains a migration: refresh golden in the background")
@@ -81,7 +90,9 @@ const program = Effect.gen(function*() {
 })
 
 program.pipe(
-  Effect.provide(Golden.layer({ golden: "shop_golden", prefix: "shop_wt" }).pipe(Layer.provideMerge(PgClient.layer({ url: url("postgres") })))),
+  Effect.provide(
+    Golden.layer({ golden: "shop_golden", prefix: "shop_wt" }).pipe(Layer.provideMerge(PgClient.layer({ url: url("postgres") })))
+  ),
   Effect.provide(NodeServices.layer),
   NodeRuntime.runMain
 )

@@ -4,6 +4,7 @@ import { OtlpSerialization, OtlpTracer } from "effect/observability"
 import { Atom, AtomRpc } from "effect/reactivity"
 import { RpcClient, RpcSerialization } from "effect/rpc"
 import { Socket } from "effect/socket"
+import { ProcessOwner, type RunId, ServiceName, WorktreeId } from "../../src/Ids.ts"
 import type { RunLine } from "../../src/Model.ts"
 import { ForkyardRpcs } from "../../src/Protocol.ts"
 
@@ -31,7 +32,7 @@ export class Forkyard extends AtomRpc.Service<Forkyard>()("Forkyard", {
   )
 }) {}
 
-const client = Effect.gen(function*() {
+const client = Effect.gen(function* () {
   return yield* Forkyard
 })
 
@@ -39,26 +40,35 @@ const stream = <A, E>(make: (forkyard: typeof Forkyard.Service) => Stream.Stream
 
 export const snapshotAtom = Forkyard.runtime.atom(stream((forkyard) => forkyard("Status", undefined))).pipe(Atom.keepAlive)
 
-export const runLogAtom = Atom.family((runId: number) =>
+export const runLogAtom = Atom.family((runId: RunId) =>
   Forkyard.runtime.atom(
     stream((forkyard) => forkyard("RunLog", { runId })).pipe(
       Stream.groupedWithin(500, "120 millis"),
-      Stream.scan<ReadonlyArray<RunLine>, ReadonlyArray<RunLine>>(() => [], (all, chunk) => [...all, ...chunk].slice(-4000))
+      Stream.scan<ReadonlyArray<RunLine>, ReadonlyArray<RunLine>>(
+        () => [],
+        (all, chunk) => [...all, ...chunk].slice(-4000)
+      )
     )
   )
 )
 
+export const runsKey = (owner: ProcessOwner, service: string, version: string) => `${owner}|${service}|${version}`
+
 export const runsAtom = Atom.family((key: string) => {
-  const [id, service] = key.split("|") as [string, string]
-  return Forkyard.runtime.atom(Effect.flatMap(client, (forkyard) => forkyard("Runs", { id, service })))
+  const [owner, service] = key.split("|") as [string, string]
+  return Forkyard.runtime.atom(Effect.flatMap(client, (forkyard) => forkyard("Runs", { owner: ProcessOwner.make(owner), service })))
 })
+
+export const envKey = (id: WorktreeId, service: ServiceName, version: string) => `${id}|${service}|${version}`
 
 export const envAtom = Atom.family((key: string) => {
   const [id, service] = key.split("|") as [string, string]
-  return Forkyard.runtime.atom(Effect.flatMap(client, (forkyard) => forkyard("Env", { id, service })))
+  return Forkyard.runtime.atom(
+    Effect.flatMap(client, (forkyard) => forkyard("Env", { id: WorktreeId.make(id), service: ServiceName.make(service) }))
+  )
 })
 
-export const restartAtom = Forkyard.runtime.fn((target: { readonly id: string; readonly service: string }) =>
+export const restartAtom = Forkyard.runtime.fn((target: { readonly id: WorktreeId; readonly service: ServiceName }) =>
   Effect.flatMap(client, (forkyard) => forkyard("Restart", target)).pipe(
     Effect.withSpan("Dashboard.restart", { attributes: { "forkyard.worktree": target.id, "forkyard.service": target.service } })
   )

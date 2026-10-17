@@ -1,7 +1,11 @@
 const hue = (text) => [...text].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 360, 7)
 
 export const escape = (value) =>
-  String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;")
+  String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
 
 const css = `
 :root{--accent:#3730a3;--ink:#1f2328;--muted:#57606a;--line:#e5e7eb;--tint:#eef2ff}
@@ -33,8 +37,8 @@ export const table = (columns, rows) =>
   rows.length === 0
     ? `<p class="empty">Nothing yet.</p>`
     : `<table><tr>${columns.map((column) => `<th>${escape(column)}</th>`).join("")}</tr>${rows
-      .map((row) => `<tr>${row.map((cell) => `<td>${escape(cell)}</td>`).join("")}</tr>`)
-      .join("")}</table>`
+        .map((row) => `<tr>${row.map((cell) => `<td>${escape(cell)}</td>`).join("")}</tr>`)
+        .join("")}</table>`
 
 export const readForm = async (request) => Object.fromEntries(new URLSearchParams(Buffer.concat(await request.toArray()).toString()))
 
@@ -68,5 +72,7 @@ const logRequests = (server) =>
 
 export const listen = (server, name) =>
   logRequests(server).listen(Number(process.env.PORT), "127.0.0.1", () =>
-    console.log(`${name} listening on 127.0.0.1:${process.env.PORT} for worktree ${process.env.FORKYARD_WORKTREE ?? "(not under forkyard)"}`)
+    console.log(
+      `${name} listening on 127.0.0.1:${process.env.PORT} for worktree ${process.env.FORKYARD_WORKTREE ?? "(not under forkyard)"}`
+    )
   )

@@ -1,4 +1,5 @@
 import { Effect, Layer, Path } from "effect"
+import type { Port } from "./Ids.ts"
 import { dockerContainer } from "./infra/Shared.ts"
 import { toolsFor } from "./InfraManager.ts"
 import { Proc } from "./Proc.ts"
@@ -6,12 +7,12 @@ import { Router } from "./Router.ts"
 
 export const layer = (options: {
   readonly traefikDir: string
-  readonly port: number
+  readonly port: Port
   readonly dashboardHost: string
-  readonly dashboardPort: number
+  readonly dashboardPort: Port
 }) =>
   Layer.effectDiscard(
-    Effect.gen(function*() {
+    Effect.gen(function* () {
       const proc = yield* Proc
       const router = yield* Router
       const path = yield* Path.Path
@@ -20,8 +21,10 @@ export const layer = (options: {
         infra: "traefik",
         name: `forkyard-traefik-${options.port}`,
         args: [
-          "-p", `${options.port}:80`,
-          "-v", `${path.resolve(options.traefikDir)}:/etc/traefik/dynamic`,
+          "-p",
+          `${options.port}:80`,
+          "-v",
+          `${path.resolve(options.traefikDir)}:/etc/traefik/dynamic`,
           "traefik:v3",
           "--entrypoints.web.address=:80",
           "--providers.file.directory=/etc/traefik/dynamic",

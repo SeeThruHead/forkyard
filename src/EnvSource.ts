@@ -38,9 +38,9 @@ export const dotenv = (...files: ReadonlyArray<string>): EnvSource => ({
   label: files.join(" + "),
   load: (context) =>
     Effect.forEach(files, (file) =>
-      context.readFile(`${context.root}/${file}`).pipe(
-        Effect.map(Option.match({ onNone: () => ({}), onSome: (text) => entriesOf(parseEnv(text)) }))
-      )
+      context
+        .readFile(`${context.root}/${file}`)
+        .pipe(Effect.map(Option.match({ onNone: () => ({}), onSome: (text) => entriesOf(parseEnv(text)) })))
     ).pipe(Effect.map((all) => all.reduce((merged, next) => ({ ...merged, ...next }), {})))
 })
 
@@ -50,21 +50,21 @@ const VarlockOutput = Schema.Struct({
 
 export const varlock = (options: { readonly run?: Run; readonly path?: string } = {}): EnvSource => ({
   label: "varlock",
-  load: Effect.fn("EnvSource.varlock")(function*(context: EnvLoadContext) {
-      const run = options.run ?? { command: "pnpm", args: ["exec", "varlock"] }
-      const json = yield* context.exec(
-        { command: run.command, args: [...run.args, "load", "--format", "json-full"] },
-        options.path ? `${context.root}/${options.path}` : context.root
-      )
-      const output = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(VarlockOutput))(json).pipe(
-        Effect.mapError((error) => new EnvError({ source: "varlock", message: error.message }))
-      )
-      return Object.fromEntries(
-        Object.entries(output.config)
-          .filter(([, item]) => item.value !== undefined && item.value !== null)
-          .map(([key, item]) => [key, { value: String(item.value), sensitive: item.isSensitive }])
-      )
-    })
+  load: Effect.fn("EnvSource.varlock")(function* (context: EnvLoadContext) {
+    const run = options.run ?? { command: "pnpm", args: ["exec", "varlock"] }
+    const json = yield* context.exec(
+      { command: run.command, args: [...run.args, "load", "--format", "json-full"] },
+      options.path ? `${context.root}/${options.path}` : context.root
+    )
+    const output = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(VarlockOutput))(json).pipe(
+      Effect.mapError((error) => new EnvError({ source: "varlock", message: error.message }))
+    )
+    return Object.fromEntries(
+      Object.entries(output.config)
+        .filter(([, item]) => item.value !== undefined && item.value !== null)
+        .map(([key, item]) => [key, { value: String(item.value), sensitive: item.isSensitive }])
+    )
+  })
 })
 
 const ComposeConfig = Schema.Struct({
@@ -76,14 +76,14 @@ const ComposeConfig = Schema.Struct({
 
 export const compose = (options: { readonly service: string; readonly file?: string }): EnvSource => ({
   label: `compose:${options.service}`,
-  load: Effect.fn("EnvSource.compose")(function*(context: EnvLoadContext) {
-      const file = options.file ?? "docker-compose.yml"
-      const json = yield* context.exec({ command: "docker", args: ["compose", "-f", file, "config", "--format", "json"] }, context.root)
-      const config = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ComposeConfig))(json).pipe(
-        Effect.mapError((error) => new EnvError({ source: "compose", message: error.message }))
-      )
-      const service = config.services[options.service]
-      if (!service) return yield* new EnvError({ source: "compose", message: `no service ${options.service} in ${file}` })
-      return entriesOf(service.environment ?? {})
-    })
+  load: Effect.fn("EnvSource.compose")(function* (context: EnvLoadContext) {
+    const file = options.file ?? "docker-compose.yml"
+    const json = yield* context.exec({ command: "docker", args: ["compose", "-f", file, "config", "--format", "json"] }, context.root)
+    const config = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ComposeConfig))(json).pipe(
+      Effect.mapError((error) => new EnvError({ source: "compose", message: error.message }))
+    )
+    const service = config.services[options.service]
+    if (!service) return yield* new EnvError({ source: "compose", message: `no service ${options.service} in ${file}` })
+    return entriesOf(service.environment ?? {})
+  })
 })

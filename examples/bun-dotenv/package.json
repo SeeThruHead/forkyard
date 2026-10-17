@@ -1,11 +1,11 @@
 {
   "name": "shortly",
   "private": true,
-  "type": "module",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
+  "type": "module",
   "scripts": {
     "dev": "forkyard up",
     "down": "forkyard down"

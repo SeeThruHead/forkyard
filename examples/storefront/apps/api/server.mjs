@@ -31,7 +31,12 @@ const info = async () => ({
   migrations: (await query("SELECT name FROM schema_migrations ORDER BY name")).map((row) => row.name),
   temporal: { address: process.env.TEMPORAL_ADDRESS, namespaces: await temporalNamespaces(), ui: process.env.TEMPORAL_UI_URL },
   auth: { issuer: process.env.AUTH_ISSUER_URL, client: process.env.AUTH_CLIENT_ID },
-  urls: { api: process.env.API_URL, shop: process.env.SHOP_URL, backoffice: process.env.BACKOFFICE_URL, graphql: process.env.API_GRAPHQL_URL }
+  urls: {
+    api: process.env.API_URL,
+    shop: process.env.SHOP_URL,
+    backoffice: process.env.BACKOFFICE_URL,
+    graphql: process.env.API_GRAPHQL_URL
+  }
 })
 
 const routes = {
@@ -39,10 +44,19 @@ const routes = {
   "GET /api/info": async (_request, response) => json(response, 200, await info()),
   "GET /api/products": async (_request, response) => json(response, 200, await query("SELECT * FROM products ORDER BY id")),
   "GET /api/orders": async (_request, response) =>
-    json(response, 200, await query("SELECT orders.*, products.name AS product FROM orders JOIN products ON products.id = orders.product_id ORDER BY orders.id DESC")),
+    json(
+      response,
+      200,
+      await query(
+        "SELECT orders.*, products.name AS product FROM orders JOIN products ON products.id = orders.product_id ORDER BY orders.id DESC"
+      )
+    ),
   "POST /api/orders": async (request, response) => {
     const { productId, note } = await readJson(request)
-    const [order] = await query("INSERT INTO orders (product_id, quantity, note) VALUES ($1, 1, $2) RETURNING *", [Number(productId), String(note ?? "").slice(0, 200)])
+    const [order] = await query("INSERT INTO orders (product_id, quantity, note) VALUES ($1, 1, $2) RETURNING *", [
+      Number(productId),
+      String(note ?? "").slice(0, 200)
+    ])
     console.log(`order ${order.id} placed for product ${order.product_id}`)
     json(response, 201, order)
   },
@@ -73,7 +87,16 @@ const routes = {
           ["temporal", `${about.temporal.address} (${about.temporal.namespaces.join(", ")})`],
           ["auth issuer", about.auth.issuer],
           ["graphql url", about.urls.graphql]
-        ])}<h2>Endpoints</h2>${table(["Path", ""], [["/api/info", "what this api is connected to"], ["/api/products", "seed data"], ["/api/orders", "orders placed from the shop"], ["/api/jobs", "queued from the backoffice, run by workers"], ["/api/gift-cards", "only on branches with the gift cards migration"]])}`
+        ])}<h2>Endpoints</h2>${table(
+          ["Path", ""],
+          [
+            ["/api/info", "what this api is connected to"],
+            ["/api/products", "seed data"],
+            ["/api/orders", "orders placed from the shop"],
+            ["/api/jobs", "queued from the backoffice, run by workers"],
+            ["/api/gift-cards", "only on branches with the gift cards migration"]
+          ]
+        )}`
       })
     )
   }

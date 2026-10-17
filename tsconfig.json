@@ -12,9 +12,7 @@
     "erasableSyntaxOnly": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": [
-      "node"
-    ]
+    "types": ["node"]
   },
   "include": [
     "src",
@@ -26,5 +24,6 @@
     "examples/architectures",
     "test",
     "tools"
-  ]
+  ],
+  "exclude": ["test/lint/fixtures"]
 }

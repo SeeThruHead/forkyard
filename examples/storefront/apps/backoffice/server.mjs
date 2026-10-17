@@ -25,7 +25,10 @@ const home = async (response) => {
       <p><a href="${escape(process.env.TEMPORAL_UI_URL)}" target="_blank">Open this worktree's Temporal UI</a></p>
       <h2>Background jobs</h2>
       <form method="post" action="/jobs"><select name="kind"><option>recount inventory</option><option>send order receipts</option><option>rebuild search index</option></select><button>Queue</button></form>
-      ${table(["#", "Job", "Status", "Run by"], jobs.map((job) => [job.id, job.kind, job.status, job.done_by ?? ""]))}
+      ${table(
+        ["#", "Job", "Status", "Run by"],
+        jobs.map((job) => [job.id, job.kind, job.status, job.done_by ?? ""])
+      )}
       <p class="muted">The workers pick these up within a second. Refresh to see the status change.</p>`
     })
   )

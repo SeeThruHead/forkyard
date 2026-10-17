@@ -20,7 +20,8 @@ describe("no AI attribution", () => {
   })
 
   it.effect("the repository and its history are clean", () =>
-    Effect.gen(function*() {
+    Effect.gen(function* () {
       expect(yield* scanRepository()).toEqual([])
-    }).pipe(Effect.provide(NodeServices.layer)))
+    }).pipe(Effect.provide(NodeServices.layer))
+  )
 })

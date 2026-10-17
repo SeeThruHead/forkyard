@@ -26,7 +26,7 @@ export class AttributionFound extends Schema.TaggedError<AttributionFound>()("At
 
 const exempt = new Set(["tools/attribution.ts", "test/Attribution.test.ts"])
 
-export const scanRepository = Effect.fn("Attribution.scanRepository")(function*() {
+export const scanRepository = Effect.fn("Attribution.scanRepository")(function* () {
   const fs = yield* FileSystem.FileSystem
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
 
@@ -37,12 +37,14 @@ export const scanRepository = Effect.fn("Attribution.scanRepository")(function*(
       Effect.orElseSucceed((): ReadonlyArray<Finding> => [])
     )
   )
-  const history = yield* spawner.string(ChildProcess.make("git", ["log", "--format=%H%n%an <%ae>%n%B%n---"])).pipe(Effect.orElseSucceed(() => ""))
+  const history = yield* spawner
+    .string(ChildProcess.make("git", ["log", "--format=%H%n%an <%ae>%n%B%n---"]))
+    .pipe(Effect.orElseSucceed(() => ""))
 
   return [...fileFindings.flat(), ...findAttribution("git history", history)]
 })
 
-export const checkMessage = Effect.fn("Attribution.checkMessage")(function*(file: string) {
+export const checkMessage = Effect.fn("Attribution.checkMessage")(function* (file: string) {
   const fs = yield* FileSystem.FileSystem
   const findings = findAttribution("commit message", yield* fs.readFileString(file))
 
@@ -51,10 +53,13 @@ export const checkMessage = Effect.fn("Attribution.checkMessage")(function*(file
 
 const report = (error: AttributionFound) =>
   Console.error(
-    ["AI attribution is not allowed in this repository:", ...error.findings.map((finding) => `  ${finding.where}:${finding.line}  ${finding.text}`)].join("\n")
+    [
+      "AI attribution is not allowed in this repository:",
+      ...error.findings.map((finding) => `  ${finding.where}:${finding.line}  ${finding.text}`)
+    ].join("\n")
   )
 
-const main = Effect.gen(function*() {
+const main = Effect.gen(function* () {
   const message = process.argv[2]
   if (message) return yield* checkMessage(message)
 

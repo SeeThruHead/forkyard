@@ -7,8 +7,7 @@ export class PlanError extends Schema.TaggedError<PlanError>()("PlanError", {
 
 export const nodeName = (node: Node): string => (node._tag === "Service" ? node.name : node.spec.name)
 
-const dependencies = (node: Node): ReadonlyArray<string> =>
-  node._tag === "Service" ? [...node.uses, ...node.after] : []
+const dependencies = (node: Node): ReadonlyArray<string> => (node._tag === "Service" ? [...node.uses, ...node.after] : [])
 
 export type Plan = {
   readonly graph: Graph.DirectedGraph<string, "needs">
@@ -16,27 +15,35 @@ export type Plan = {
   readonly mermaid: string
 }
 
-export const plan = Effect.fn("Plan.plan")(function*(nodes: ReadonlyArray<Node>) {
+const unknownDependencies = (nodes: ReadonlyArray<Node>) => {
   const names = nodes.map(nodeName)
-  const missing = nodes.flatMap((node) =>
-    dependencies(node).filter((dep) => !names.includes(dep)).map((dep) => `${nodeName(node)} needs ${dep}`)
+  return nodes.flatMap((node) =>
+    dependencies(node)
+      .filter((dep) => !names.includes(dep))
+      .map((dep) => `${nodeName(node)} needs ${dep}`)
   )
-  if (Array.isReadonlyArrayNonEmpty(missing)) {
-    return yield* new PlanError({ message: `Unknown dependencies: ${missing.join(", ")}` })
-  }
+}
 
-  const graph = Graph.directed<string, "needs">((mutable) => {
-    const index = new Map(names.map((name) => [name, Graph.addNode(mutable, name)] as const))
+const dependencyGraph = (nodes: ReadonlyArray<Node>) =>
+  Graph.directed<string, "needs">((mutable) => {
+    const index = new Map(nodes.map((node) => [nodeName(node), Graph.addNode(mutable, nodeName(node))] as const))
     nodes.forEach((node) =>
       dependencies(node).forEach((dep) => Graph.addEdge(mutable, index.get(dep)!, index.get(nodeName(node))!, "needs"))
     )
   })
 
-  const cycle = Graph.findCycle(graph)
-  if (Option.isSome(cycle)) {
-    const path = cycle.value.path.map((index) => Graph.getNode(graph, index).pipe(Option.getOrElse(() => "?")))
-    return yield* new PlanError({ message: `Dependency cycle: ${path.join(" -> ")}` })
-  }
+const cyclePath = (graph: Graph.DirectedGraph<string, "needs">) =>
+  Graph.findCycle(graph).pipe(
+    Option.map((cycle) => cycle.path.map((index) => Graph.getNode(graph, index).pipe(Option.getOrElse(() => "?"))))
+  )
+
+export const plan = Effect.fn("Plan.plan")(function* (nodes: ReadonlyArray<Node>) {
+  const missing = unknownDependencies(nodes)
+  if (Array.isReadonlyArrayNonEmpty(missing)) return yield* new PlanError({ message: `Unknown dependencies: ${missing.join(", ")}` })
+
+  const graph = dependencyGraph(nodes)
+  const cycle = cyclePath(graph)
+  if (Option.isSome(cycle)) return yield* new PlanError({ message: `Dependency cycle: ${cycle.value.join(" -> ")}` })
 
   return {
     graph,

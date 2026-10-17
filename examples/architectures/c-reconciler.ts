@@ -33,14 +33,17 @@ export const diff = (desired: Desired | undefined, observed: Observed | undefine
   return observed.propsHash === Hash.structure(desired.props) ? "noop" : "replace"
 }
 
-export class Reconciler extends Context.Service<Reconciler, {
-  readonly desire: (resources: ReadonlyArray<Desired>) => Effect.Effect<void>
-  readonly plan: Effect.Effect<ReadonlyArray<readonly [string, Action]>, ReconcileError>
-}>()("c/Reconciler") {
+export class Reconciler extends Context.Service<
+  Reconciler,
+  {
+    readonly desire: (resources: ReadonlyArray<Desired>) => Effect.Effect<void>
+    readonly plan: Effect.Effect<ReadonlyArray<readonly [string, Action]>, ReconcileError>
+  }
+>()("c/Reconciler") {
   static readonly layer = (providers: ReadonlyArray<Provider>) =>
     Layer.effect(
       Reconciler,
-      Effect.gen(function*() {
+      Effect.gen(function* () {
         const byKind = Object.fromEntries(providers.map((provider) => [provider.kind, provider]))
         const desired = yield* SubscriptionRef.make<ReadonlyArray<Desired>>([])
         const running = yield* FiberMap.make<string>()
@@ -51,17 +54,15 @@ export class Reconciler extends Context.Service<Reconciler, {
           return provider ? Effect.succeed(provider) : Effect.fail(new ReconcileError({ resource: kind, message: "no provider" }))
         }
 
-        const apply = Effect.fn("Reconciler.apply")(function*(resource: Desired, action: Action) {
+        const apply = Effect.fn("Reconciler.apply")(function* (resource: Desired, action: Action) {
           const provider = yield* providerOf(resource.kind)
           if (action === "noop") return
           if (action === "delete") return yield* FiberMap.remove(running, resource.id)
           yield* Ref.update(hashes, (all) => ({ ...all, [resource.id]: Hash.structure(resource.props) }))
-          yield* FiberMap.run(running, resource.id)(
-            provider.reconcile(resource).pipe(Effect.andThen(Effect.never), Effect.scoped)
-          )
+          yield* FiberMap.run(running, resource.id)(provider.reconcile(resource).pipe(Effect.andThen(Effect.never), Effect.scoped))
         })
 
-        const plan = Effect.gen(function*() {
+        const plan = Effect.gen(function* () {
           const wanted = yield* SubscriptionRef.get(desired)
           return yield* Effect.forEach(wanted, (resource) =>
             providerOf(resource.kind).pipe(
@@ -71,7 +72,7 @@ export class Reconciler extends Context.Service<Reconciler, {
           )
         })
 
-        const reconcileAll = Effect.gen(function*() {
+        const reconcileAll = Effect.gen(function* () {
           const wanted = yield* SubscriptionRef.get(desired)
           const actions = yield* plan
           yield* Effect.forEach(wanted, (resource, index) => apply(resource, actions[index]?.[1] ?? "noop"), {

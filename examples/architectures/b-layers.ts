@@ -9,17 +9,18 @@ class Temporal extends Context.Service<Temporal, { readonly address: string }>()
 class Api extends Context.Service<Api, { readonly url: string }>()("b/Api") {}
 class CoreWorkers extends Context.Service<CoreWorkers, { readonly pid: number }>()("b/CoreWorkers") {}
 
-const supervised = Effect.fn("supervised")(function*(name: string, env: Record<string, string>) {
+const supervised = Effect.fn("supervised")(function* (name: string, env: Record<string, string>) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-  const once = spawner
-    .spawn(ChildProcess.make("pnpm", ["--filter", name, "dev"], { env, extendEnv: true, detached: true }))
-    .pipe(Effect.flatMap((handle) => handle.exitCode), Effect.scoped)
+  const once = spawner.spawn(ChildProcess.make("pnpm", ["--filter", name, "dev"], { env, extendEnv: true, detached: true })).pipe(
+    Effect.flatMap((handle) => handle.exitCode),
+    Effect.scoped
+  )
   yield* once.pipe(Effect.repeat(Schedule.spaced("500 millis")), Effect.forkScoped)
 })
 
 const PostgresShared = Layer.effect(
   Postgres,
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     yield* spawner.spawn(ChildProcess.make("docker", ["compose", "up", "postgres"]))
     return Postgres.of({ url: "postgres://postgres@127.0.0.1:5432" })
@@ -28,7 +29,7 @@ const PostgresShared = Layer.effect(
 
 const TemporalPerWorktree = Layer.effect(
   Temporal,
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const handle = yield* spawner.spawn(ChildProcess.make("temporal", ["server", "start-dev", "--port", "0"]))
     const address = yield* handle.stdout.pipe(
@@ -45,7 +46,7 @@ const TemporalPerWorktree = Layer.effect(
 
 const ApiLive = Layer.effect(
   Api,
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const { slug } = yield* CurrentWorktree
     const postgres = yield* Postgres
     const temporal = yield* Temporal
@@ -59,7 +60,7 @@ const ApiLive = Layer.effect(
 
 const CoreWorkersLive = Layer.effect(
   CoreWorkers,
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const { slug } = yield* CurrentWorktree
     const api = yield* Api
     const temporal = yield* Temporal
@@ -82,7 +83,7 @@ export class Worktrees extends LayerMap.Service<Worktrees>()("b/Worktrees", {
 }) {}
 
 export const up = (slug: string) =>
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const api = yield* Api
     yield* Effect.logInfo(`${slug} is up at ${api.url}`)
     return yield* Effect.never

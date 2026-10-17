@@ -3,15 +3,15 @@ import { Effect, Layer } from "effect"
 import { Migrator, SqlClient } from "effect/sql"
 
 const migrations = Migrator.fromRecord({
-  "1_processes": Effect.gen(function*() {
+  "1_processes": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql`CREATE TABLE processes (pid INTEGER PRIMARY KEY, worktree TEXT NOT NULL, service TEXT NOT NULL)`
   }),
-  "2_worktrees": Effect.gen(function*() {
+  "2_worktrees": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql`CREATE TABLE worktrees (slug TEXT PRIMARY KEY, root TEXT NOT NULL, desired TEXT NOT NULL)`
   }),
-  "3_runs": Effect.gen(function*() {
+  "3_runs": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql`CREATE TABLE runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,10 +33,15 @@ const migrations = Migrator.fromRecord({
       PRIMARY KEY (run_id, seq)
     )`
   }),
-  "4_worktree_branch": Effect.gen(function*() {
+  "4_worktree_branch": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE worktrees ADD COLUMN branch TEXT NOT NULL DEFAULT ''`
     yield* sql`ALTER TABLE worktrees ADD COLUMN stack_file TEXT NOT NULL DEFAULT ''`
+  }),
+  "5_process_identity": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE processes ADD COLUMN daemon_id TEXT NOT NULL DEFAULT ''`
+    yield* sql`ALTER TABLE processes ADD COLUMN boot_minute INTEGER NOT NULL DEFAULT 0`
   })
 })
 

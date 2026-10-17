@@ -14,14 +14,14 @@ export const Worktree = Entity.make("Worktree", [Up, Down, Status])
 declare const superviseStack: (slug: string, root: string) => Effect.Effect<never>
 
 export const WorktreeLive = Worktree.toLayer(
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const address = yield* Entity.CurrentAddress
     const stack = yield* FiberHandle.make()
     return Worktree.of({
-      Up: ({ payload }) => FiberHandle.run(stack, superviseStack(address.entityId, payload.root), { onlyIfMissing: true }).pipe(Effect.asVoid),
+      Up: ({ payload }) =>
+        FiberHandle.run(stack, superviseStack(address.entityId, payload.root), { onlyIfMissing: true }).pipe(Effect.asVoid),
       Down: () => FiberHandle.clear(stack),
-      Status: () =>
-        FiberHandle.get(stack).pipe(Effect.map(Option.match({ onNone: () => "down" as const, onSome: () => "up" as const })))
+      Status: () => FiberHandle.get(stack).pipe(Effect.map(Option.match({ onNone: () => "down" as const, onSome: () => "up" as const })))
     })
   }),
   { maxIdleTime: "12 hours" }
@@ -38,7 +38,7 @@ export const RefreshGolden = Workflow.make("RefreshGolden", {
 declare const sqlStep: (step: string) => Effect.Effect<void, RefreshFailed>
 
 export const RefreshGoldenLive = RefreshGolden.toLayer(
-  Effect.fn(function*(payload) {
+  Effect.fn(function* (payload) {
     yield* Activity.make({ name: "clone", error: RefreshFailed, execute: sqlStep("clone golden to next") })
     yield* Activity.make({ name: "migrate", error: RefreshFailed, execute: sqlStep(`migrate next to ${payload.commit}`) })
     yield* Activity.make({ name: "swap", error: RefreshFailed, execute: sqlStep("rename next to golden") })

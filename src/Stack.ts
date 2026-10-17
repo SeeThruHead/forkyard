@@ -1,13 +1,23 @@
 import { Context, Effect, Ref, Schema, type Scope } from "effect"
 import type { EnvSource } from "./EnvSource.ts"
+import {
+  type AbsolutePath,
+  type BranchSlug,
+  type InfraName,
+  type Pid,
+  type Port,
+  ProjectName,
+  ServiceName,
+  type WorktreeId
+} from "./Ids.ts"
 
 export type Worktree = {
-  readonly id: string
-  readonly project: string
-  readonly branch: string
-  readonly root: string
+  readonly id: WorktreeId
+  readonly project: ProjectName
+  readonly branch: BranchSlug
+  readonly root: AbsolutePath
   readonly domain: string
-  readonly proxyPort: number
+  readonly proxyPort: Port
 }
 
 export type Run = {
@@ -22,8 +32,12 @@ export class InfraError extends Schema.TaggedError<InfraError>()("InfraError", {
   message: Schema.String
 }) {}
 
+export class ConfigError extends Schema.TaggedError<ConfigError>()("ConfigError", {
+  message: Schema.String
+}) {}
+
 export type InfraProcess = {
-  readonly pid: number
+  readonly pid: Pid
   readonly exited: Effect.Effect<number>
   readonly output: Effect.Effect<ReadonlyArray<string>>
 }
@@ -44,9 +58,9 @@ export type InfraTools = {
 }
 
 export type InfraStarted = {
-  readonly port: number
+  readonly port: Port | undefined
   readonly env: Env
-  readonly routes: Readonly<Record<string, number>>
+  readonly routes: Readonly<Record<string, Port>>
 }
 
 export type InfraServer = InfraStarted & {
@@ -56,23 +70,25 @@ export type InfraServer = InfraStarted & {
 }
 
 export type InfraSpec = {
-  readonly name: string
+  readonly name: InfraName
   readonly scope: "worktree" | "shared"
   readonly start: (instance: string, tools: InfraTools) => Effect.Effect<InfraStarted, InfraError, Scope.Scope>
   readonly tenant: (server: InfraServer, worktree: Worktree, tools: InfraTools) => Effect.Effect<Env, InfraError, Scope.Scope>
 }
 
+export type ServiceKind = "http" | "worker" | "task"
+
 export type ServiceNode = {
   readonly _tag: "Service"
-  readonly name: string
-  readonly kind: "http" | "worker" | "task"
+  readonly name: ServiceName
+  readonly kind: ServiceKind
   readonly run: Run
   readonly cwd: string
   readonly env: Env
   readonly envFrom: ReadonlyArray<EnvSource>
-  readonly uses: ReadonlyArray<string>
-  readonly after: ReadonlyArray<string>
-  readonly health: string | undefined
+  readonly uses: ReadonlyArray<InfraName>
+  readonly after: ReadonlyArray<ServiceName>
+  readonly health: string
 }
 
 export type InfraNode = {
@@ -89,13 +105,16 @@ export const urlOf = (worktree: Worktree, name: string) =>
 
 export class CurrentWorktree extends Context.Service<CurrentWorktree, Worktree>()("forkyard/Stack/CurrentWorktree") {}
 
-export class StackBuilder extends Context.Service<StackBuilder, {
-  readonly add: (node: Node) => Effect.Effect<void>
-}>()("forkyard/Stack/StackBuilder") {}
+export class StackBuilder extends Context.Service<
+  StackBuilder,
+  {
+    readonly add: (node: Node) => Effect.Effect<void>
+  }
+>()("forkyard/Stack/StackBuilder") {}
 
-export type InfraRef = { readonly infra: string }
+export type InfraRef = { readonly infra: InfraName }
 
-export type ServiceRef = { readonly service: string; readonly url: string }
+export type ServiceRef = { readonly service: ServiceName; readonly url: string }
 
 type ServiceProps = {
   readonly run: Run
@@ -107,22 +126,32 @@ type ServiceProps = {
   readonly health?: string
 }
 
-const declare = (kind: ServiceNode["kind"]) =>
-  Effect.fn(`Service.${kind}`)(function*(name: string, props: ServiceProps) {
+const serviceName = (name: string) =>
+  ServiceName.makeEffect(name).pipe(
+    Effect.mapError(() => new ConfigError({ message: `"${name}" is not a valid service name: use lowercase letters, digits and dashes` }))
+  )
+
+const serviceNode = (kind: ServiceKind, name: ServiceName, props: ServiceProps): ServiceNode => ({
+  _tag: "Service",
+  name,
+  kind,
+  run: props.run,
+  cwd: props.cwd ?? ".",
+  env: props.env ?? {},
+  envFrom: props.envFrom ?? [],
+  uses: (props.uses ?? []).map((ref) => ref.infra),
+  after: (props.after ?? []).map((ref) => ref.service),
+  health: props.health ?? "/health"
+})
+
+const declare = (kind: ServiceKind) =>
+  Effect.fn(`Service.${kind}`)(function* (rawName: string, props: ServiceProps) {
     const builder = yield* StackBuilder
     const worktree = yield* CurrentWorktree
-    yield* builder.add({
-      _tag: "Service",
-      name,
-      kind,
-      run: props.run,
-      cwd: props.cwd ?? ".",
-      env: props.env ?? {},
-      envFrom: props.envFrom ?? [],
-      uses: (props.uses ?? []).map((ref) => ref.infra),
-      after: (props.after ?? []).map((ref) => ref.service),
-      health: props.health
-    })
+    const name = yield* serviceName(rawName)
+
+    yield* builder.add(serviceNode(kind, name, props))
+
     return { service: name, url: urlOf(worktree, name) } satisfies ServiceRef
   })
 
@@ -132,13 +161,20 @@ export const Service = {
   task: declare("task")
 }
 
-export const url = Effect.fn("url")(function*(name: string) {
-  return urlOf(yield* CurrentWorktree, name)
+export const serviceRef = Effect.fn("serviceRef")(function* (rawName: string) {
+  const worktree = yield* CurrentWorktree
+  const name = yield* serviceName(rawName)
+
+  return { service: name, url: urlOf(worktree, name) } satisfies ServiceRef
 })
 
-export const Infra = Effect.fn("Infra")(function*(spec: InfraSpec) {
+export const url = (rawName: string) => serviceRef(rawName).pipe(Effect.map((ref) => ref.url))
+
+export const Infra = Effect.fn("Infra")(function* (spec: InfraSpec) {
   const builder = yield* StackBuilder
+
   yield* builder.add({ _tag: "Infra", spec })
+
   return { infra: spec.name } satisfies InfraRef
 })
 
@@ -150,21 +186,18 @@ export const node = (script: string, ...args: ReadonlyArray<string>): Run => ({
 export const cmd = (command: string, ...args: ReadonlyArray<string>): Run => ({ command, args })
 
 export type Stack = {
-  readonly name: string
-  readonly build: (worktree: Worktree) => Effect.Effect<ReadonlyArray<Node>>
+  readonly name: ProjectName
+  readonly build: (worktree: Worktree) => Effect.Effect<ReadonlyArray<Node>, ConfigError>
 }
 
-export const make = (
-  name: string,
-  program: Effect.Effect<unknown, never, StackBuilder | CurrentWorktree>
-): Stack => ({
-  name,
-  build: Effect.fn("Stack.build")(function*(worktree: Worktree) {
+export const make = (name: string, program: Effect.Effect<unknown, ConfigError, StackBuilder | CurrentWorktree>): Stack => ({
+  name: ProjectName.make(name),
+  build: Effect.fn("Stack.build")(function* (worktree: Worktree) {
     const nodes = yield* Ref.make<ReadonlyArray<Node>>([])
-    yield* program.pipe(
-      Effect.provideService(StackBuilder, StackBuilder.of({ add: (node) => Ref.update(nodes, (all) => [...all, node]) })),
-      Effect.provideService(CurrentWorktree, worktree)
-    )
+    const builder = StackBuilder.of({ add: (node) => Ref.update(nodes, (all) => [...all, node]) })
+
+    yield* program.pipe(Effect.provideService(StackBuilder, builder), Effect.provideService(CurrentWorktree, worktree))
+
     return yield* Ref.get(nodes)
   })
 })
