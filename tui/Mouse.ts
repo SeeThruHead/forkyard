@@ -1,6 +1,5 @@
-import { Text, useStdin, useStdout } from "ink"
-import { createElement as h, useEffect } from "react"
-import { theme } from "./Theme.ts"
+import { useStdin, useStdout } from "ink"
+import { useEffect } from "react"
 
 export type Mouse = { readonly button: number; readonly x: number; readonly y: number; readonly press: boolean }
 
@@ -61,14 +60,3 @@ export const place = (buttons: ReadonlyArray<Button>): ReadonlyArray<PlacedButto
 
 export const clickedButton = (buttons: ReadonlyArray<PlacedButton>, x: number) =>
   buttons.find((button) => x >= button.from && x <= button.to)
-
-export const ButtonBar = ({ buttons, note }: { readonly buttons: ReadonlyArray<PlacedButton>; readonly note: string }) =>
-  h(
-    Text,
-    { wrap: "truncate" },
-    ...buttons.flatMap((button) => [
-      " ",
-      h(Text, { key: button.label, backgroundColor: theme.buttonBg, color: theme.buttonText }, button.label)
-    ]),
-    h(Text, { color: theme.muted }, `   ${note}`)
-  )

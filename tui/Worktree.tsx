@@ -1,9 +1,10 @@
 import { Box, Text, useInput } from "ink"
-import { createElement as h, type ReactNode, useMemo, useState } from "react"
+import { type ReactNode, useMemo, useState } from "react"
 import type { EnvVar, InfraView, ServiceView, UsageMap, WorktreeView } from "../src/Model.ts"
 import { runOf, serviceUrl } from "../src/Model.ts"
 import { keyOfInfra, type Line, type Logs, separator } from "./Feeds.ts"
-import { ButtonBar, clickedButton, isClick, isMouseInput, isWheel, isWheelDown, type Mouse, place, useMouse } from "./Mouse.ts"
+import { ButtonBar } from "./ButtonBar.tsx"
+import { clickedButton, isClick, isMouseInput, isWheel, isWheelDown, type Mouse, place, useMouse } from "./Mouse.ts"
 import { formatCpu, formatMem, usageFor } from "./Stats.ts"
 import { keyColor, stateColor, theme } from "./Theme.ts"
 
@@ -74,90 +75,95 @@ const matches = (filter: string) => (line: Line) => filter === "" || line.text.t
 
 const EntryRow = ({ entry, selected }: { readonly entry: Entry; readonly selected: boolean }) => {
   const { label, icon, color, state } = lookOf(entry)
-  return h(
-    Text,
-    { wrap: "truncate", ...(selected ? { backgroundColor: theme.selectedBg } : {}) },
-    h(Text, { color }, `${icon} `),
-    h(Text, { color: theme.text, bold: selected }, pad(label, 22)),
-    h(Text, { color: entry._tag === "Service" ? color : theme.faint }, pad(state, 11))
+  return (
+    <Text wrap="truncate" {...(selected ? { backgroundColor: theme.selectedBg } : {})}>
+      <Text color={color}>{`${icon} `}</Text>
+      <Text color={theme.text} bold={selected}>
+        {pad(label, 22)}
+      </Text>
+      <Text color={entry._tag === "Service" ? color : theme.faint}>{pad(state, 11)}</Text>
+    </Text>
   )
 }
 
 const Highlighted = ({ text, filter }: { readonly text: string; readonly filter: string }): ReactNode => {
   const at = filter === "" ? -1 : text.toLowerCase().indexOf(filter.toLowerCase())
   if (at === -1) return text
-  return h(
-    Text,
-    null,
-    text.slice(0, at),
-    h(Text, { backgroundColor: theme.matchBg, color: theme.matchText }, text.slice(at, at + filter.length)),
-    text.slice(at + filter.length)
+  return (
+    <Text>
+      {text.slice(0, at)}
+      <Text backgroundColor={theme.matchBg} color={theme.matchText}>
+        {text.slice(at, at + filter.length)}
+      </Text>
+      {text.slice(at + filter.length)}
+    </Text>
   )
 }
 
-const LogLine = ({ line, showKey, filter }: { readonly line: Line; readonly showKey: boolean; readonly filter: string }) =>
-  h(
-    Text,
-    { wrap: "truncate" },
-    showKey ? h(Text, { color: keyColor(line.key) }, `${pad(line.key.replace(/^infra:/, ""), 18)} `) : null,
-    h(Text, { color: separator(line.text) ? theme.faint : theme.text }, h(Highlighted, { text: line.text, filter }))
-  )
+const LogLine = ({ line, showKey, filter }: { readonly line: Line; readonly showKey: boolean; readonly filter: string }) => (
+  <Text wrap="truncate">
+    {showKey ? <Text color={keyColor(line.key)}>{`${pad(line.key.replace(/^infra:/, ""), 18)} `}</Text> : null}
+    <Text color={separator(line.text) ? theme.faint : theme.text}>
+      <Highlighted text={line.text} filter={filter} />
+    </Text>
+  </Text>
+)
 
-const EnvTable = ({ vars }: { readonly vars: ReadonlyArray<EnvVar> }) =>
-  h(
-    Box,
-    { flexDirection: "column" },
-    h(Text, { color: theme.faint }, `${pad("VARIABLE", 34)}${pad("FROM", 30)}VALUE`),
-    ...vars.map((entry) =>
-      h(
-        Text,
-        { key: entry.key, wrap: "truncate" },
-        h(Text, { color: theme.accent }, pad(entry.key, 34)),
-        h(Text, { color: theme.muted }, pad(entry.source, 30)),
-        h(Text, { color: theme.text }, entry.value),
-        entry.replaced ? h(Text, { color: theme.faint }, `  (was ${entry.replaced})`) : null
-      )
-    )
-  )
+const EnvTable = ({ vars }: { readonly vars: ReadonlyArray<EnvVar> }) => (
+  <Box flexDirection="column">
+    <Text color={theme.faint}>{`${pad("VARIABLE", 34)}${pad("FROM", 30)}VALUE`}</Text>
+    {vars.map((entry) => (
+      <Text key={entry.key} wrap="truncate">
+        <Text color={theme.accent}>{pad(entry.key, 34)}</Text>
+        <Text color={theme.muted}>{pad(entry.source, 30)}</Text>
+        <Text color={theme.text}>{entry.value}</Text>
+        {entry.replaced ? <Text color={theme.faint}>{`  (was ${entry.replaced})`}</Text> : null}
+      </Text>
+    ))}
+  </Box>
+)
 
-const ProcessTable = ({ worktree, usage }: { readonly worktree: WorktreeView; readonly usage: UsageMap }) =>
-  h(
-    Box,
-    { flexDirection: "column" },
-    h(
-      Text,
-      { color: theme.faint },
-      `${pad("NAME", 22)}${pad("KIND", 8)}${pad("STATE", 12)}${pad("RUN", 6)}${pad("PID", 8)}${pad("CPU", 7)}${pad("MEMORY", 9)}URL / REASON`
-    ),
-    ...Object.entries(worktree.infra).map(([name, view]) =>
-      h(
-        Text,
-        { key: `infra-${name}`, wrap: "truncate" },
-        h(Text, { color: theme.text }, pad(name, 22)),
-        h(Text, { color: theme.muted }, pad("infra", 8)),
-        h(Text, { color: stateColor(view._tag) }, pad(view._tag.replace("Infra", "").toLowerCase(), 12)),
-        h(Text, { color: theme.muted }, pad(view.scope, 37)),
-        h(Text, { color: theme.accent }, "url" in view ? (view.url ?? "") : "")
-      )
-    ),
-    ...Object.entries(worktree.services).map(([name, view]) => {
-      const run = runOf(view.state)
-      const use = run ? usageFor(usage, run.pid) : undefined
-      const note = serviceUrl(view) ?? ("reason" in view.state ? view.state.reason : "")
-      return h(
-        Text,
-        { key: name, wrap: "truncate" },
-        h(Text, { color: theme.text }, pad(name, 22)),
-        h(Text, { color: theme.muted }, pad(view._tag.toLowerCase(), 8)),
-        h(Text, { color: stateColor(view.state._tag) }, pad(view.state._tag.toLowerCase(), 12)),
-        h(Text, { color: theme.muted }, pad(run ? `#${run.run}` : "", 6)),
-        h(Text, { color: theme.muted }, pad(run ? String(run.pid) : "", 8)),
-        h(Text, { color: theme.text }, pad(formatCpu(use), 7)),
-        h(Text, { color: theme.text }, pad(formatMem(use), 9)),
-        h(Text, { color: view.state._tag === "Failed" ? theme.failed : theme.accent }, note)
-      )
-    })
+const InfraLine = ({ name, view }: { readonly name: string; readonly view: InfraView }) => (
+  <Text wrap="truncate">
+    <Text color={theme.text}>{pad(name, 22)}</Text>
+    <Text color={theme.muted}>{pad("infra", 8)}</Text>
+    <Text color={stateColor(view._tag)}>{pad(view._tag.replace("Infra", "").toLowerCase(), 12)}</Text>
+    <Text color={theme.muted}>{pad(view.scope, 37)}</Text>
+    <Text color={theme.accent}>{"url" in view ? (view.url ?? "") : ""}</Text>
+  </Text>
+)
+
+const ServiceLine = ({ name, view, usage }: { readonly name: string; readonly view: ServiceView; readonly usage: UsageMap }) => {
+  const run = runOf(view.state)
+  const use = run ? usageFor(usage, run.pid) : undefined
+  const note = serviceUrl(view) ?? ("reason" in view.state ? view.state.reason : "")
+  return (
+    <Text wrap="truncate">
+      <Text color={theme.text}>{pad(name, 22)}</Text>
+      <Text color={theme.muted}>{pad(view._tag.toLowerCase(), 8)}</Text>
+      <Text color={stateColor(view.state._tag)}>{pad(view.state._tag.toLowerCase(), 12)}</Text>
+      <Text color={theme.muted}>{pad(run ? `#${run.run}` : "", 6)}</Text>
+      <Text color={theme.muted}>{pad(run ? String(run.pid) : "", 8)}</Text>
+      <Text color={theme.text}>{pad(formatCpu(use), 7)}</Text>
+      <Text color={theme.text}>{pad(formatMem(use), 9)}</Text>
+      <Text color={view.state._tag === "Failed" ? theme.failed : theme.accent}>{note}</Text>
+    </Text>
   )
+}
+
+const ProcessTable = ({ worktree, usage }: { readonly worktree: WorktreeView; readonly usage: UsageMap }) => (
+  <Box flexDirection="column">
+    <Text color={theme.faint}>
+      {`${pad("NAME", 22)}${pad("KIND", 8)}${pad("STATE", 12)}${pad("RUN", 6)}${pad("PID", 8)}${pad("CPU", 7)}${pad("MEMORY", 9)}URL / REASON`}
+    </Text>
+    {Object.entries(worktree.infra).map(([name, view]) => (
+      <InfraLine key={`infra-${name}`} name={name} view={view} />
+    ))}
+    {Object.entries(worktree.services).map(([name, view]) => (
+      <ServiceLine key={name} name={name} view={view} usage={usage} />
+    ))}
+  </Box>
+)
 
 export const Worktree = ({
   worktree,
@@ -270,71 +276,73 @@ export const Worktree = ({
     ? [serviceUrl(service.view), "reason" in service.view.state ? service.view.state.reason : undefined].filter(Boolean).join("  ")
     : ""
   const main = () => {
-    if (env) return h(EnvTable, { vars: env })
-    if (entry._tag === "Processes") return h(ProcessTable, { worktree, usage })
-    return h(
-      Box,
-      { flexDirection: "column" },
-      ...shown.map((line, index) => h(LogLine, { key: `${index}`, line, showKey: entry._tag === "All", filter }))
+    if (env) return <EnvTable vars={env} />
+    if (entry._tag === "Processes") return <ProcessTable worktree={worktree} usage={usage} />
+    return (
+      <Box flexDirection="column">
+        {shown.map((line, index) => (
+          <LogLine key={index} line={line} showKey={entry._tag === "All"} filter={filter} />
+        ))}
+      </Box>
     )
   }
 
-  return h(
-    Box,
-    { flexDirection: "column", height: rows },
-    h(
-      Text,
-      { wrap: "truncate" },
-      h(Text, { bold: true, color: theme.accent }, "forkyard "),
-      h(Text, { color: theme.muted }, " ◀ worktrees  "),
-      h(Text, { color: theme.accent }, "◀ ▶  "),
-      h(Text, { bold: true, color: keyColor(worktree.project) }, worktree.project),
-      h(Text, { color: theme.faint }, " › "),
-      h(Text, { bold: true, color: "#ffffff" }, worktree.branch),
-      worktree.profile === "default" ? null : h(Text, { color: theme.restarting }, `  profile ${worktree.profile}`),
-      h(Text, { color: theme.muted }, `  ${position}   ${worktree.root}`)
-    ),
-    h(
-      Box,
-      { flexGrow: 1 },
-      h(
-        Box,
-        {
-          width: sidebarWidth,
-          flexShrink: 0,
-          flexDirection: "column",
-          borderStyle: "round",
-          borderColor: theme.border,
-          paddingX: 1,
-          overflow: "hidden"
-        },
-        ...entries
-          .slice(listOffset, listOffset + listRows)
-          .map((item, index) => h(EntryRow, { key: keyOf(item), entry: item, selected: index + listOffset === selected }))
-      ),
-      h(
-        Box,
-        {
-          flexGrow: 1,
-          flexDirection: "column",
-          borderStyle: "round",
-          borderColor: typing ? theme.starting : theme.border,
-          paddingX: 1,
-          overflow: "hidden"
-        },
-        h(
-          Text,
-          { wrap: "truncate" },
-          h(Text, { bold: true, color: theme.text }, lookOf(entry).label),
-          h(Text, { color: theme.accent }, `  ${detail}`),
-          filter ? h(Text, { color: theme.starting }, `  filter "${filter}" · ${visible.length} lines · ✕`) : null,
-          scroll > 0 ? h(Text, { color: theme.restarting }, `  scrolled up ${scroll} · ⤓ follow`) : null
-        ),
-        main()
-      )
-    ),
-    typing
-      ? h(Text, { color: theme.starting, wrap: "truncate" }, ` /${filter}▏  enter to keep, esc to clear`)
-      : h(ButtonBar, { buttons, note: notice || "click or ↑↓ · esc back" })
+  return (
+    <Box flexDirection="column" height={rows}>
+      <Text wrap="truncate">
+        <Text bold color={theme.accent}>
+          {"forkyard "}
+        </Text>
+        <Text color={theme.muted}>{" ◀ worktrees  "}</Text>
+        <Text color={theme.accent}>{"◀ ▶  "}</Text>
+        <Text bold color={keyColor(worktree.project)}>
+          {worktree.project}
+        </Text>
+        <Text color={theme.faint}>{" › "}</Text>
+        <Text bold color="#ffffff">
+          {worktree.branch}
+        </Text>
+        {worktree.profile === "default" ? null : <Text color={theme.restarting}>{`  profile ${worktree.profile}`}</Text>}
+        <Text color={theme.muted}>{`  ${position}   ${worktree.root}`}</Text>
+      </Text>
+      <Box flexGrow={1}>
+        <Box
+          width={sidebarWidth}
+          flexShrink={0}
+          flexDirection="column"
+          borderStyle="round"
+          borderColor={theme.border}
+          paddingX={1}
+          overflow="hidden"
+        >
+          {entries.slice(listOffset, listOffset + listRows).map((item, index) => (
+            <EntryRow key={keyOf(item)} entry={item} selected={index + listOffset === selected} />
+          ))}
+        </Box>
+        <Box
+          flexGrow={1}
+          flexDirection="column"
+          borderStyle="round"
+          borderColor={typing ? theme.starting : theme.border}
+          paddingX={1}
+          overflow="hidden"
+        >
+          <Text wrap="truncate">
+            <Text bold color={theme.text}>
+              {lookOf(entry).label}
+            </Text>
+            <Text color={theme.accent}>{`  ${detail}`}</Text>
+            {filter ? <Text color={theme.starting}>{`  filter "${filter}" · ${visible.length} lines · ✕`}</Text> : null}
+            {scroll > 0 ? <Text color={theme.restarting}>{`  scrolled up ${scroll} · ⤓ follow`}</Text> : null}
+          </Text>
+          {main()}
+        </Box>
+      </Box>
+      {typing ? (
+        <Text color={theme.starting} wrap="truncate">{` /${filter}▏  enter to keep, esc to clear`}</Text>
+      ) : (
+        <ButtonBar buttons={buttons} note={notice || "click or ↑↓ · esc back"} />
+      )}
+    </Box>
   )
 }

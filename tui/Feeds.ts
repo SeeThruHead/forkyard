@@ -46,6 +46,15 @@ const followRun = (sink: LineSink, key: string, runId: RunId, label: string) =>
 const latestInfraRun = (name: string, instance: string) =>
   ForkyardClient.use((forkyard) => forkyard.Runs({ owner: ownerOfInfra(instance), service: name })).pipe(Effect.map((runs) => runs[0]))
 
+export const reconnecting = <E, R>(feed: Effect.Effect<void, E, R>, events: { readonly start: () => void; readonly lost: () => void }) =>
+  Effect.sync(events.start).pipe(
+    Effect.andThen(feed),
+    Effect.ignore,
+    Effect.andThen(Effect.sync(events.lost)),
+    Effect.andThen(Effect.sleep("1 second")),
+    Effect.forever
+  )
+
 export const statusFeed = (onSnapshot: (snapshot: Snapshot) => void) =>
   ForkyardClient.use((forkyard) => forkyard.Status().pipe(Stream.runForEach((snapshot) => Effect.sync(() => onSnapshot(snapshot)))))
 

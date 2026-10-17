@@ -1,21 +1,18 @@
-import { render, useApp, useStdout } from "ink"
+import { Box, render, Text, useApp, useStdout } from "ink"
 import { type Context, Effect, Fiber } from "effect"
-import { createElement as h, useEffect, useReducer, useState } from "react"
+import { type ReactElement, useEffect, useReducer, useState } from "react"
 import { spawn } from "node:child_process"
 import { ForkyardClient } from "../src/Client.ts"
 import { openUrlCommand } from "../src/platform/Os.ts"
 import { type AbsolutePath, ServiceName, type WorktreeId } from "../src/Ids.ts"
 import type { EnvVar, Snapshot, UsageMap } from "../src/Model.ts"
-import { daemonFeed, emptyLogs, type Line, logsReducer, statusFeed, usageFeed, worktreeLogFeed } from "./Feeds.ts"
-import { Home } from "./Home.ts"
+import { daemonFeed, emptyLogs, type Line, logsReducer, reconnecting, statusFeed, usageFeed, worktreeLogFeed } from "./Feeds.ts"
+import { Home } from "./Home.tsx"
 import { useMouseMode } from "./Mouse.ts"
-import { NotRunning } from "./NotRunning.ts"
-import { Worktree } from "./Worktree.ts"
-
-export type View =
-  | { readonly _tag: "Home" }
-  | { readonly _tag: "Worktree"; readonly id: WorktreeId }
-  | { readonly _tag: "Checkout"; readonly root: AbsolutePath; readonly branch: string }
+import type { View } from "./View.ts"
+import { NotRunning } from "./NotRunning.tsx"
+import { theme } from "./Theme.ts"
+import { Worktree } from "./Worktree.tsx"
 
 const keepDaemon = 2000
 
@@ -41,11 +38,13 @@ type AppProps = { readonly context: Context.Context<ForkyardClient>; readonly in
 
 const App = ({ context, initial }: AppProps) => {
   const { exit } = useApp()
-  const rows = useRows()
+  const fullRows = useRows()
   const [view, setView] = useState<View>(initial)
   const [snapshot, setSnapshot] = useState<Snapshot>({})
   const [daemon, setDaemon] = useState<ReadonlyArray<Line>>([])
   const [usage, setUsage] = useState<UsageMap>({})
+  const [connected, setConnected] = useState(true)
+  const rows = connected ? fullRows : fullRows - 1
   const [logs, dispatch] = useReducer(logsReducer, emptyLogs)
 
   const run = <A, E>(effect: Effect.Effect<A, E, ForkyardClient>) => Effect.runForkWith(context)(effect)
@@ -54,9 +53,19 @@ const App = ({ context, initial }: AppProps) => {
   useMouseMode()
 
   useEffect(() => {
-    const status = run(statusFeed(setSnapshot))
-    const usageLines = run(usageFeed(setUsage))
-    const daemonLines = run(daemonFeed((_key, lines) => setDaemon((current) => [...current, ...lines].slice(-keepDaemon))))
+    const ignore = () => undefined
+    const receive = (next: Snapshot) => {
+      setConnected(true)
+      setSnapshot(next)
+    }
+    const status = run(reconnecting(statusFeed(receive), { start: ignore, lost: () => setConnected(false) }))
+    const usageLines = run(reconnecting(usageFeed(setUsage), { start: ignore, lost: ignore }))
+    const daemonLines = run(
+      reconnecting(
+        daemonFeed((_key, lines) => setDaemon((current) => [...current, ...lines].slice(-keepDaemon))),
+        { start: () => setDaemon([]), lost: ignore }
+      )
+    )
     return () => {
       run(Fiber.interrupt(status))
       run(Fiber.interrupt(usageLines))
@@ -69,7 +78,12 @@ const App = ({ context, initial }: AppProps) => {
   useEffect(() => {
     dispatch({ _tag: "Reset" })
     if (!worktreeId) return
-    const fiber = run(worktreeLogFeed(worktreeId, (key, lines) => dispatch({ _tag: "Lines", key, lines })))
+    const fiber = run(
+      reconnecting(
+        worktreeLogFeed(worktreeId, (key, lines) => dispatch({ _tag: "Lines", key, lines })),
+        { start: () => dispatch({ _tag: "Reset" }), lost: () => undefined }
+      )
+    )
     return () => {
       run(Fiber.interrupt(fiber))
     }
@@ -104,48 +118,62 @@ const App = ({ context, initial }: AppProps) => {
   const start = (root: AbsolutePath, branch: string) =>
     call(ForkyardClient.use((forkyard) => forkyard.Up({ root, branch }))).then(({ id }) => setView({ _tag: "Worktree", id }))
 
+  const framed = (content: ReactElement) =>
+    connected ? (
+      content
+    ) : (
+      <Box flexDirection="column" height={fullRows}>
+        <Text color={theme.failed} wrap="truncate">
+          {" ● lost the forkyard daemon, reconnecting… (it may be restarting)"}
+        </Text>
+        {content}
+      </Box>
+    )
+
   if (view._tag === "Checkout")
-    return h(NotRunning, {
-      root: view.root,
-      branch: view.branch,
-      rows,
-      onStart: () => start(view.root, view.branch),
-      onBack: () => setView({ _tag: "Home" }),
-      onQuit: exit
-    })
+    return framed(
+      <NotRunning
+        root={view.root}
+        branch={view.branch}
+        rows={rows}
+        onStart={() => start(view.root, view.branch)}
+        onBack={() => setView({ _tag: "Home" })}
+        onQuit={exit}
+      />
+    )
 
   if (worktreeId && worktree)
-    return h(Worktree, {
-      key: worktreeId,
-      worktree,
-      usage,
-      logs,
-      daemon,
-      rows,
-      position: `${worktree.project} branch ${ids.indexOf(worktreeId) + 1} of ${ids.length}`,
-      onBack: () => setView({ _tag: "Home" }),
-      onSwitch: switchBy,
-      onRestart: restart(worktreeId),
-      onEnv: envOf(worktreeId),
-      onOpenUrl: openUrl,
-      onQuit: exit
-    })
+    return framed(
+      <Worktree
+        key={worktreeId}
+        worktree={worktree}
+        usage={usage}
+        logs={logs}
+        daemon={daemon}
+        rows={rows}
+        position={`${worktree.project} branch ${ids.indexOf(worktreeId) + 1} of ${ids.length}`}
+        onBack={() => setView({ _tag: "Home" })}
+        onSwitch={switchBy}
+        onRestart={restart(worktreeId)}
+        onEnv={envOf(worktreeId)}
+        onOpenUrl={openUrl}
+        onQuit={exit}
+      />
+    )
 
-  return h(Home, {
-    snapshot,
-    usage,
-    daemon,
-    rows,
-    onOpen: (id: WorktreeId) => setView({ _tag: "Worktree", id }),
-    onStop: stop,
-    onDashboard: () => openUrl("http://forkyard.localhost"),
-    onQuit: exit
-  })
+  return framed(
+    <Home
+      snapshot={snapshot}
+      usage={usage}
+      daemon={daemon}
+      rows={rows}
+      onOpen={(id: WorktreeId) => setView({ _tag: "Worktree", id })}
+      onStop={stop}
+      onDashboard={() => openUrl("http://forkyard.localhost")}
+      onQuit={exit}
+    />
+  )
 }
 
 export const attach = (context: Context.Context<ForkyardClient>, initial: View) =>
-  Effect.promise(() =>
-    render(h(App, { context, initial }), {
-      exitOnCtrlC: false
-    }).waitUntilExit()
-  )
+  Effect.promise(() => render(<App context={context} initial={initial} />, { exitOnCtrlC: false }).waitUntilExit())

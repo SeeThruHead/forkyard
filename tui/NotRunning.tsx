@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from "ink"
-import { createElement as h, useState } from "react"
-import { ButtonBar, clickedButton, isClick, isMouseInput, type Mouse, place, useMouse } from "./Mouse.ts"
+import { useState } from "react"
+import { ButtonBar } from "./ButtonBar.tsx"
+import { clickedButton, isClick, isMouseInput, type Mouse, place, useMouse } from "./Mouse.ts"
 import { theme } from "./Theme.ts"
 
 type Props = {
@@ -44,32 +45,32 @@ export const NotRunning = ({ root, branch, rows, onStart, onBack, onQuit }: Prop
     if (key.escape || key.leftArrow) return onBack()
   })
 
-  return h(
-    Box,
-    { flexDirection: "column", height: rows },
-    h(
-      Text,
-      { wrap: "truncate" },
-      h(Text, { bold: true, color: theme.accent }, "forkyard  "),
-      h(Text, { color: theme.muted }, "◀ worktrees  "),
-      h(Text, { bold: true, color: "#ffffff" }, branch),
-      h(Text, { color: theme.muted }, `   ${root}`)
-    ),
-    h(
-      Box,
-      { flexDirection: "column", flexGrow: 1, borderStyle: "round", borderColor: theme.border, paddingX: 1 },
-      h(Text, { color: theme.text }, `This checkout (${branch}) is not running.`),
-      h(Text, null, ""),
-      h(
-        Text,
-        { backgroundColor: theme.buttonBg, color: status.busy ? theme.starting : theme.ready },
-        status.busy ? " starting… " : " ▶ Start this worktree "
-      ),
-      h(Text, null, ""),
-      status.error
-        ? h(Text, { color: theme.failed }, status.error)
-        : h(Text, { color: theme.muted }, "⏎ or click to start. It opens here as its services come up.")
-    ),
-    h(ButtonBar, { buttons, note: "⏎ start · esc worktrees" })
+  return (
+    <Box flexDirection="column" height={rows}>
+      <Text wrap="truncate">
+        <Text bold color={theme.accent}>
+          forkyard{"  "}
+        </Text>
+        <Text color={theme.muted}>◀ worktrees{"  "}</Text>
+        <Text bold color="#ffffff">
+          {branch}
+        </Text>
+        <Text color={theme.muted}>{`   ${root}`}</Text>
+      </Text>
+      <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor={theme.border} paddingX={1}>
+        <Text color={theme.text}>This checkout ({branch}) is not running.</Text>
+        <Text> </Text>
+        <Text backgroundColor={theme.buttonBg} color={status.busy ? theme.starting : theme.ready}>
+          {status.busy ? " starting… " : " ▶ Start this worktree "}
+        </Text>
+        <Text> </Text>
+        {status.error ? (
+          <Text color={theme.failed}>{status.error}</Text>
+        ) : (
+          <Text color={theme.muted}>⏎ or click to start. It opens here as its services come up.</Text>
+        )}
+      </Box>
+      <ButtonBar buttons={buttons} note="⏎ start · esc worktrees" />
+    </Box>
   )
 }

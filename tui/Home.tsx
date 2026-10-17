@@ -1,9 +1,10 @@
 import { Box, Text, useInput } from "ink"
-import { createElement as h, useState } from "react"
+import { useState } from "react"
 import type { WorktreeId } from "../src/Ids.ts"
 import { runOf, serviceUrl, type ServiceView, type Snapshot, type UsageMap, type WorktreeView } from "../src/Model.ts"
 import type { Line } from "./Feeds.ts"
-import { ButtonBar, clickedButton, isClick, isMouseInput, isWheel, isWheelDown, type Mouse, place, useMouse } from "./Mouse.ts"
+import { ButtonBar } from "./ButtonBar.tsx"
+import { clickedButton, isClick, isMouseInput, isWheel, isWheelDown, type Mouse, place, useMouse } from "./Mouse.ts"
 import { formatCpu, formatMem, sumUsage, usageFor } from "./Stats.ts"
 import { keyColor, stateColor, theme } from "./Theme.ts"
 
@@ -114,14 +115,16 @@ const RowLine = ({ row, usage, selected }: RowProps) => {
   if (row._tag === "Repo") {
     const tone = repoTone(row.worktrees)
     const resources = sumUsage(row.worktrees.map((worktree) => sumUsage(pidsOf(worktree).map((pid) => usageFor(usage, pid)))))
-    return h(
-      Text,
-      { wrap: "truncate", ...background },
-      h(Text, { color: theme.muted }, row.open ? "▾ " : "▸ "),
-      h(Text, { bold: true, color: keyColor(row.project) }, row.project),
-      h(Text, { color: theme.muted }, `  ${row.worktrees.length} ${row.worktrees.length === 1 ? "branch" : "branches"}  `),
-      h(Text, { color: tone.color }, `${tone.label}  `),
-      h(Text, { color: theme.text }, `${formatCpu(resources)}  ${formatMem(resources)}`)
+    return (
+      <Text wrap="truncate" {...background}>
+        <Text color={theme.muted}>{row.open ? "▾ " : "▸ "}</Text>
+        <Text bold color={keyColor(row.project)}>
+          {row.project}
+        </Text>
+        <Text color={theme.muted}>{`  ${row.worktrees.length} ${row.worktrees.length === 1 ? "branch" : "branches"}  `}</Text>
+        <Text color={tone.color}>{`${tone.label}  `}</Text>
+        <Text color={theme.text}>{`${formatCpu(resources)}  ${formatMem(resources)}`}</Text>
+      </Text>
     )
   }
 
@@ -130,32 +133,35 @@ const RowLine = ({ row, usage, selected }: RowProps) => {
     const infra = Object.values(row.worktree.infra)
     const infraReady = infra.filter((view) => view._tag === "InfraReady").length
     const resources = sumUsage(pidsOf(row.worktree).map((pid) => usageFor(usage, pid)))
-    return h(
-      Text,
-      { wrap: "truncate", ...background },
-      h(Text, { color: theme.muted }, row.expanded ? "  ▾ " : "  ▸ "),
-      h(Text, { bold: true, color: theme.text }, pad(row.worktree.branch, 22)),
-      h(Text, { color }, pad(label, 20)),
-      h(Text, { color: infraReady === infra.length ? theme.muted : theme.starting }, pad(`infra ${infraReady}/${infra.length}`, 13)),
-      h(Text, { color: theme.text }, pad(formatCpu(resources), 6)),
-      h(Text, { color: theme.text }, pad(formatMem(resources), 7)),
-      h(Text, { color: theme.accent }, mainUrl(row.worktree))
+    return (
+      <Text wrap="truncate" {...background}>
+        <Text color={theme.muted}>{row.expanded ? "  ▾ " : "  ▸ "}</Text>
+        <Text bold color={theme.text}>
+          {pad(row.worktree.branch, 22)}
+        </Text>
+        <Text color={color}>{pad(label, 20)}</Text>
+        <Text color={infraReady === infra.length ? theme.muted : theme.starting}>{pad(`infra ${infraReady}/${infra.length}`, 13)}</Text>
+        <Text color={theme.text}>{pad(formatCpu(resources), 6)}</Text>
+        <Text color={theme.text}>{pad(formatMem(resources), 7)}</Text>
+        <Text color={theme.accent}>{mainUrl(row.worktree)}</Text>
+      </Text>
     )
   }
 
   const run = runOf(row.view.state)
   const use = run ? usageFor(usage, run.pid) : undefined
   const note = serviceUrl(row.view)?.replace("http://", "") ?? ("reason" in row.view.state ? row.view.state.reason : "")
-  return h(
-    Text,
-    { wrap: "truncate", ...background },
-    h(Text, { color: stateColor(row.view.state._tag) }, "      ● "),
-    h(Text, { color: theme.text }, pad(row.name, 22)),
-    h(Text, { color: stateColor(row.view.state._tag) }, pad(row.view.state._tag.toLowerCase(), 11)),
-    h(Text, { color: theme.muted }, pad(run ? `#${run.run}` : "", 6)),
-    h(Text, { color: theme.text }, pad(formatCpu(use), 6)),
-    h(Text, { color: theme.text }, pad(formatMem(use), 7)),
-    h(Text, { color: row.view.state._tag === "Failed" ? theme.failed : theme.accent }, note)
+  const tone = stateColor(row.view.state._tag)
+  return (
+    <Text wrap="truncate" {...background}>
+      <Text color={tone}>{"      ● "}</Text>
+      <Text color={theme.text}>{pad(row.name, 22)}</Text>
+      <Text color={tone}>{pad(row.view.state._tag.toLowerCase(), 11)}</Text>
+      <Text color={theme.muted}>{pad(run ? `#${run.run}` : "", 6)}</Text>
+      <Text color={theme.text}>{pad(formatCpu(use), 6)}</Text>
+      <Text color={theme.text}>{pad(formatMem(use), 7)}</Text>
+      <Text color={row.view.state._tag === "Failed" ? theme.failed : theme.accent}>{note}</Text>
+    </Text>
   )
 }
 
@@ -236,67 +242,48 @@ export const Home = ({ snapshot, usage, daemon, rows, onOpen, onStop, onDashboar
     if (input === "d") return onDashboard()
   })
 
-  return h(
-    Box,
-    { flexDirection: "column", height: rows },
-    h(
-      Text,
-      { wrap: "truncate" },
-      h(Text, { bold: true, color: theme.accent }, "forkyard  "),
-      h(
-        Text,
-        { color: theme.text },
-        `${worktrees.length} worktrees · ${new Set(worktrees.map((worktree) => worktree.project)).size} repos · ${processes} processes`
-      ),
-      h(Text, { color: theme.muted }, `   CPU ${formatCpu(total)}   memory ${formatMem(total)}`)
-    ),
-    h(
-      Box,
-      { flexDirection: "column", flexGrow: 1, borderStyle: "round", borderColor: theme.border, paddingX: 1, overflow: "hidden" },
-      worktrees.length === 0 ? h(Text, { color: theme.muted }, "Nothing running. Run forkyard up in a checkout.") : null,
-      ...list.slice(offset, offset + listRows).map((row, at) =>
-        h(RowLine, {
-          key: rowKey(row),
-          row,
-          usage,
-          selected: at + offset === index
-        })
-      )
-    ),
-    h(
-      Box,
-      { height: bottomHeight },
-      h(
-        Box,
-        {
-          width: 48,
-          flexShrink: 0,
-          flexDirection: "column",
-          borderStyle: "round",
-          borderColor: theme.border,
-          paddingX: 1,
-          overflow: "hidden"
-        },
-        h(Text, { bold: true, color: theme.text }, "shared infra"),
-        ...shared
-          .slice(0, bottomHeight - 3)
-          .map((item) =>
-            h(
-              Text,
-              { key: `${item.name}${item.worktree}`, wrap: "truncate" },
-              h(Text, { color: stateColor(item.view._tag) }, "● "),
-              h(Text, { color: theme.text }, pad(item.name, 20)),
-              h(Text, { color: theme.muted }, `used by ${item.users}`)
-            )
-          )
-      ),
-      h(
-        Box,
-        { flexGrow: 1, flexDirection: "column", borderStyle: "round", borderColor: theme.border, paddingX: 1, overflow: "hidden" },
-        h(Text, { bold: true, color: theme.text }, "forkyard log"),
-        ...daemon.slice(-(bottomHeight - 3)).map((line, at) => h(Text, { key: `${at}`, color: theme.muted, wrap: "truncate" }, line.text))
-      )
-    ),
-    h(ButtonBar, { buttons, note: "⏎ open · → expand · ← collapse · click ▸ to expand" })
+  return (
+    <Box flexDirection="column" height={rows}>
+      <Text wrap="truncate">
+        <Text bold color={theme.accent}>
+          forkyard{"  "}
+        </Text>
+        <Text color={theme.text}>
+          {`${worktrees.length} worktrees · ${new Set(worktrees.map((worktree) => worktree.project)).size} repos · ${processes} processes`}
+        </Text>
+        <Text color={theme.muted}>{`   CPU ${formatCpu(total)}   memory ${formatMem(total)}`}</Text>
+      </Text>
+      <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor={theme.border} paddingX={1} overflow="hidden">
+        {worktrees.length === 0 ? <Text color={theme.muted}>Nothing running. Run forkyard up in a checkout.</Text> : null}
+        {list.slice(offset, offset + listRows).map((row, at) => (
+          <RowLine key={rowKey(row)} row={row} usage={usage} selected={at + offset === index} />
+        ))}
+      </Box>
+      <Box height={bottomHeight}>
+        <Box width={48} flexShrink={0} flexDirection="column" borderStyle="round" borderColor={theme.border} paddingX={1} overflow="hidden">
+          <Text bold color={theme.text}>
+            shared infra
+          </Text>
+          {shared.slice(0, bottomHeight - 3).map((item) => (
+            <Text key={`${item.name}${item.worktree}`} wrap="truncate">
+              <Text color={stateColor(item.view._tag)}>● </Text>
+              <Text color={theme.text}>{pad(item.name, 20)}</Text>
+              <Text color={theme.muted}>used by {item.users}</Text>
+            </Text>
+          ))}
+        </Box>
+        <Box flexGrow={1} flexDirection="column" borderStyle="round" borderColor={theme.border} paddingX={1} overflow="hidden">
+          <Text bold color={theme.text}>
+            forkyard log
+          </Text>
+          {daemon.slice(-(bottomHeight - 3)).map((line, at) => (
+            <Text key={at} color={theme.muted} wrap="truncate">
+              {line.text}
+            </Text>
+          ))}
+        </Box>
+      </Box>
+      <ButtonBar buttons={buttons} note="⏎ open · → expand · ← collapse · click ▸ to expand" />
+    </Box>
   )
 }

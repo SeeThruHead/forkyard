@@ -1,2 +1,6 @@
 #!/bin/sh
-exec node --conditions=forkyard-source --no-warnings "$(dirname "$(realpath "$0")")/forkyard.ts" "$@"
+here="$(dirname "$(realpath "$0")")"
+if [ "$1" = "attach" ]; then
+  exec node --conditions=forkyard-source --no-warnings --import "$here/../node_modules/tsx/dist/esm/index.mjs" "$here/forkyard.ts" "$@"
+fi
+exec node --conditions=forkyard-source --no-warnings "$here/forkyard.ts" "$@"

@@ -8,7 +8,7 @@ import { AbsolutePath, InfraName, ownerOfWorktree, ServiceName, type WorktreeId 
 import { defaultHome, runDaemon } from "../src/main-daemon.ts"
 import { packageVersion, protocolVersion } from "../src/Package.ts"
 import { layer as osLayer, Os, unsupportedHere } from "../src/platform/Os.ts"
-import { attach as attachTui, type View } from "../tui/Attach.ts"
+import type { View } from "../tui/View.ts"
 import * as Service from "./service.ts"
 import { type EnvVar, isSettled, runOf, serviceUrl, type Snapshot, stateDetail, stateLabel, type WorktreeView } from "../src/Model.ts"
 
@@ -213,7 +213,8 @@ const attach = Command.make("attach", {}, () =>
     const worktrees = Object.values(yield* snapshot)
     const here = worktrees.find((worktree) => worktree.root === checkout?.root)
 
-    yield* attachTui(yield* Effect.context<ForkyardClient>(), startingView(here?.id, checkout))
+    const tui = yield* Effect.promise(() => import("../tui/Attach.tsx"))
+    yield* tui.attach(yield* Effect.context<ForkyardClient>(), startingView(here?.id, checkout))
   }).pipe(Effect.scoped, Effect.provide(client))
 ).pipe(Command.withDescription("Open the terminal UI on this checkout's worktree, or on every worktree when run elsewhere"))
 
