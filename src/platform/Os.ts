@@ -17,8 +17,8 @@ export class Os extends Context.Service<
     readonly name: OsName
     readonly commandFor: (run: Run) => Command
     readonly spawnGroup: { readonly detached: boolean; readonly killSignal: "SIGTERM" | undefined }
-    readonly isAlive: (pid: number) => Effect.Effect<boolean>
     readonly killTree: (pid: number) => Effect.Effect<void>
+    readonly startedAt: (pid: number) => Effect.Effect<number | undefined>
     readonly processTable: Effect.Effect<ReadonlyArray<ProcessRow>>
     readonly ipcPath: (home: string) => string
     readonly hostsFile: string
@@ -39,12 +39,6 @@ export const parseTable = (output: string): ReadonlyArray<ProcessRow> =>
 
 const signal = (pid: number, name: NodeJS.Signals | 0) => Effect.try({ try: () => process.kill(pid, name), catch: () => false })
 
-const isAlive = (pid: number) =>
-  signal(pid, 0).pipe(
-    Effect.as(true),
-    Effect.orElseSucceed(() => false)
-  )
-
 const readTable = (command: string, args: ReadonlyArray<string>) =>
   ChildProcessSpawner.ChildProcessSpawner.use((spawner) => spawner.string(ChildProcess.make(command, [...args]))).pipe(
     Effect.map(parseTable),
@@ -61,12 +55,19 @@ const replaceSelf = Effect.sync(() => {
   process.exit(spawnSync(process.execPath, ownCommand(), { stdio: "inherit" }).status ?? 1)
 })
 
+const startedAt = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => (pid: number) =>
+  spawner.string(ChildProcess.make("ps", ["-o", "lstart=", "-p", String(pid)], { env: { LC_ALL: "C" }, extendEnv: true })).pipe(
+    Effect.map((text) => Date.parse(text.trim())),
+    Effect.map((millis) => (Number.isNaN(millis) ? undefined : millis)),
+    Effect.orElseSucceed(() => undefined)
+  )
+
 const unix = (name: "darwin" | "linux", spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]): Os["Service"] => ({
   name,
   commandFor: (run) => (isShell(run) ? { command: "/bin/sh", args: ["-c", run.shell] } : run),
   spawnGroup: { detached: true, killSignal: "SIGTERM" },
-  isAlive,
   killTree: (pid) => signal(-pid, "SIGKILL").pipe(Effect.ignore),
+  startedAt: startedAt(spawner),
   processTable: readTable("ps", ["-A", "-o", "pid=,ppid=,%cpu=,rss="]).pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)
   ),

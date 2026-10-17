@@ -6,10 +6,9 @@ import { AbsolutePath, BranchSlug, Pid, ProcessOwner, type ProjectName, type Wor
 
 export const ProcessRow = Schema.Struct({
   pid: Pid,
-  worktree: ProcessOwner,
-  service: Schema.String,
   daemon_id: Schema.String,
-  boot_minute: Schema.Int
+  boot_minute: Schema.Int,
+  started_at: Schema.NullOr(Schema.Number)
 })
 export type ProcessRow = typeof ProcessRow.Type
 
@@ -48,7 +47,6 @@ export class Registry extends Context.Service<
       readonly owner: ProcessOwner
       readonly service: string
     }) => Effect.Effect<void, never, Scope.Scope>
-    readonly reaped: ReadonlyArray<ProcessRow>
     readonly nameFor: (root: AbsolutePath, project: ProjectName, base: BranchSlug) => Effect.Effect<BranchSlug>
     readonly markUp: (worktree: DesiredWorktree) => Effect.Effect<void>
     readonly markDown: (id: WorktreeId) => Effect.Effect<void>
@@ -64,16 +62,19 @@ export class Registry extends Context.Service<
       const crypto = yield* Crypto.Crypto
       const identity: Identity = { daemonId: yield* crypto.randomUUIDv4().pipe(Effect.orDie), bootMinute: yield* bootMinute }
 
-      const previousProcesses = sql`SELECT pid, worktree, service, daemon_id, boot_minute FROM processes`.pipe(
+      const previousProcesses = sql`SELECT pid, daemon_id, boot_minute, started_at FROM processes`.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ProcessRow))),
         Effect.orDie
       )
+
+      const stillTheSameProcess = (row: ProcessRow) =>
+        row.started_at === null ? Effect.succeed(false) : os.startedAt(row.pid).pipe(Effect.map((now) => now === row.started_at))
 
       const reapOrphans = Effect.fn("Registry.reapOrphans")(
         function* () {
           const rows = yield* previousProcesses
           const candidates = rows.filter(fromThisBoot(identity)).filter(fromAnotherDaemon(identity))
-          const alive = yield* Effect.filter(candidates, (row) => os.isAlive(row.pid))
+          const alive = yield* Effect.filter(candidates, stillTheSameProcess)
 
           yield* Effect.forEach(alive, (row) => os.killTree(row.pid), { discard: true })
           yield* sql`DELETE FROM processes`.pipe(Effect.orDie)
@@ -84,19 +85,20 @@ export class Registry extends Context.Service<
         Effect.tap((alive) => Effect.logInfo(`reaped ${alive.length} orphaned processes from a previous daemon`))
       )
 
-      const track = (process: { readonly pid: Pid; readonly owner: ProcessOwner; readonly service: string }) => {
+      const track = Effect.fnUntraced(function* (process: { readonly pid: Pid; readonly owner: ProcessOwner; readonly service: string }) {
         const row = {
           pid: process.pid,
           worktree: process.owner,
           service: process.service,
           daemon_id: identity.daemonId,
-          boot_minute: identity.bootMinute
+          boot_minute: identity.bootMinute,
+          started_at: (yield* os.startedAt(process.pid)) ?? null
         }
         const insert = sql`INSERT OR REPLACE INTO processes ${sql.insert(row)}`.pipe(Effect.orDie)
         const remove = sql`DELETE FROM processes WHERE pid = ${process.pid} AND daemon_id = ${identity.daemonId}`.pipe(Effect.orDie)
 
-        return Effect.acquireRelease(insert, () => remove).pipe(Effect.asVoid)
-      }
+        yield* Effect.acquireRelease(insert, () => remove)
+      })
 
       const folders = sql`SELECT slug, root FROM worktrees`.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(NamedFolder))),
@@ -132,9 +134,9 @@ export class Registry extends Context.Service<
         Effect.orDie
       )
 
-      const reaped = yield* reapOrphans()
+      yield* reapOrphans()
 
-      return Registry.of({ track, reaped, nameFor, markUp, markDown, desiredUp })
+      return Registry.of({ track, nameFor, markUp, markDown, desiredUp })
     })
   )
 }

@@ -60,6 +60,10 @@ const migrations = Migrator.fromRecord({
   "7_worktree_profile": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE worktrees ADD COLUMN profile TEXT NOT NULL DEFAULT 'default'`
+  }),
+  "8_process_start_time": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE processes ADD COLUMN started_at INTEGER`
   })
 })
 
