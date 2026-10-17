@@ -1,0 +1,452 @@
+{
+  "main.dispatch": {
+    "id": "main.dispatch",
+    "project": "dispatch",
+    "branch": "main",
+    "root": "/home/dev/forkyard/run/worktrees/dispatch/main",
+    "profile": "default",
+    "services": {
+      "codegen": {
+        "_tag": "Task",
+        "state": {
+          "_tag": "Done",
+          "run": {
+            "runId": 7304,
+            "run": 17,
+            "pid": 57131
+          }
+        }
+      },
+      "migrate": {
+        "_tag": "Task",
+        "state": {
+          "_tag": "Done",
+          "run": {
+            "runId": 7306,
+            "run": 17,
+            "pid": 57137
+          }
+        }
+      },
+      "api": {
+        "_tag": "Http",
+        "url": "http://api.main.dispatch.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7311,
+            "run": 22,
+            "pid": 57195
+          }
+        }
+      },
+      "gateway": {
+        "_tag": "Http",
+        "url": "http://gateway.main.dispatch.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7371,
+            "run": 15,
+            "pid": 58940
+          }
+        }
+      },
+      "console": {
+        "_tag": "Http",
+        "url": "http://console.main.dispatch.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7380,
+            "run": 15,
+            "pid": 59298
+          }
+        }
+      },
+      "dispatch-worker": {
+        "_tag": "Worker",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7312,
+            "run": 17,
+            "pid": 57196
+          }
+        }
+      },
+      "billing-worker": {
+        "_tag": "Worker",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7318,
+            "run": 17,
+            "pid": 57215
+          }
+        }
+      },
+      "notifications-worker": {
+        "_tag": "Worker",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7317,
+            "run": 17,
+            "pid": 57213
+          }
+        }
+      },
+      "schedules": {
+        "_tag": "Task",
+        "state": {
+          "_tag": "Done",
+          "run": {
+            "runId": 7305,
+            "run": 16,
+            "pid": 57134
+          }
+        }
+      }
+    },
+    "infra": {
+      "postgres": {
+        "_tag": "InfraReady",
+        "scope": "shared",
+        "instance": "shared"
+      },
+      "temporal": {
+        "_tag": "InfraReady",
+        "scope": "worktree",
+        "instance": "main.dispatch",
+        "url": "http://temporal.main.dispatch.localhost"
+      }
+    }
+  },
+  "feat-gift-cards.northwind": {
+    "id": "feat-gift-cards.northwind",
+    "project": "northwind",
+    "branch": "feat-gift-cards",
+    "root": "/home/dev/forkyard/run/worktrees/northwind/feat-gift-cards",
+    "profile": "default",
+    "services": {
+      "migrate": {
+        "_tag": "Task",
+        "state": {
+          "_tag": "Done",
+          "run": {
+            "runId": 7338,
+            "run": 18,
+            "pid": 57803
+          }
+        }
+      },
+      "nats-setup": {
+        "_tag": "Task",
+        "state": {
+          "_tag": "Done",
+          "run": {
+            "runId": 7329,
+            "run": 18,
+            "pid": 57491
+          }
+        }
+      },
+      "codegen": {
+        "_tag": "Task",
+        "state": {
+          "_tag": "Done",
+          "run": {
+            "runId": 7365,
+            "run": 18,
+            "pid": 58820
+          }
+        }
+      },
+      "codegen-backoffice": {
+        "_tag": "Task",
+        "state": {
+          "_tag": "Done",
+          "run": {
+            "runId": 7367,
+            "run": 18,
+            "pid": 58835
+          }
+        }
+      },
+      "billing-codegen": {
+        "_tag": "Task",
+        "state": {
+          "_tag": "Done",
+          "run": {
+            "runId": 7339,
+            "run": 18,
+            "pid": 57804
+          }
+        }
+      },
+      "billing-webhooks": {
+        "_tag": "Task",
+        "state": {
+          "_tag": "Done",
+          "run": {
+            "runId": 7331,
+            "run": 18,
+            "pid": 57584
+          }
+        }
+      },
+      "core-api": {
+        "_tag": "Http",
+        "url": "http://core-api.feat-gift-cards.northwind.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7342,
+            "run": 18,
+            "pid": 57833
+          }
+        }
+      },
+      "jobs": {
+        "_tag": "Worker",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7374,
+            "run": 18,
+            "pid": 58957
+          }
+        }
+      },
+      "graph": {
+        "_tag": "Http",
+        "url": "http://graph.feat-gift-cards.northwind.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7368,
+            "run": 19,
+            "pid": 58897
+          }
+        }
+      },
+      "billing-api": {
+        "_tag": "Http",
+        "url": "http://billing-api.feat-gift-cards.northwind.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7376,
+            "run": 18,
+            "pid": 59129
+          }
+        }
+      },
+      "billing-worker": {
+        "_tag": "Worker",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7377,
+            "run": 18,
+            "pid": 59147
+          }
+        }
+      },
+      "platform-worker": {
+        "_tag": "Worker",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7370,
+            "run": 18,
+            "pid": 58915
+          }
+        }
+      },
+      "event-handlers": {
+        "_tag": "Worker",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7372,
+            "run": 18,
+            "pid": 58944
+          }
+        }
+      },
+      "outbox": {
+        "_tag": "Worker",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7373,
+            "run": 19,
+            "pid": 58948
+          }
+        }
+      },
+      "image-api": {
+        "_tag": "Http",
+        "url": "http://image-api.feat-gift-cards.northwind.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7343,
+            "run": 18,
+            "pid": 57838
+          }
+        }
+      },
+      "mail-shim": {
+        "_tag": "Http",
+        "url": "http://mail-shim.feat-gift-cards.northwind.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7341,
+            "run": 18,
+            "pid": 57830
+          }
+        }
+      },
+      "fake-kyc": {
+        "_tag": "Http",
+        "url": "http://fake-kyc.feat-gift-cards.northwind.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7344,
+            "run": 17,
+            "pid": 57929
+          }
+        }
+      },
+      "auth": {
+        "_tag": "Http",
+        "url": "http://auth.feat-gift-cards.northwind.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7346,
+            "run": 18,
+            "pid": 58004
+          }
+        }
+      },
+      "auth-ui": {
+        "_tag": "Http",
+        "url": "http://auth-ui.feat-gift-cards.northwind.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7347,
+            "run": 18,
+            "pid": 58151
+          }
+        }
+      },
+      "portal": {
+        "_tag": "Http",
+        "url": "http://portal.feat-gift-cards.northwind.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7386,
+            "run": 18,
+            "pid": 59604
+          }
+        }
+      },
+      "backoffice": {
+        "_tag": "Http",
+        "url": "http://backoffice.feat-gift-cards.northwind.localhost",
+        "state": {
+          "_tag": "Ready",
+          "run": {
+            "runId": 7379,
+            "run": 18,
+            "pid": 59297
+          }
+        }
+      }
+    },
+    "infra": {
+      "postgres": {
+        "_tag": "InfraReady",
+        "scope": "shared",
+        "instance": "shared"
+      },
+      "billing-postgres": {
+        "_tag": "InfraReady",
+        "scope": "shared",
+        "instance": "shared"
+      },
+      "redis": {
+        "_tag": "InfraReady",
+        "scope": "worktree",
+        "instance": "feat-gift-cards.northwind"
+      },
+      "nats": {
+        "_tag": "InfraReady",
+        "scope": "worktree",
+        "instance": "feat-gift-cards.northwind"
+      },
+      "temporal": {
+        "_tag": "InfraReady",
+        "scope": "worktree",
+        "instance": "feat-gift-cards.northwind",
+        "url": "http://temporal.feat-gift-cards.northwind.localhost"
+      },
+      "billing-temporal": {
+        "_tag": "InfraReady",
+        "scope": "worktree",
+        "instance": "feat-gift-cards.northwind",
+        "url": "http://billing-temporal.feat-gift-cards.northwind.localhost"
+      },
+      "mailpit": {
+        "_tag": "InfraReady",
+        "scope": "shared",
+        "instance": "northwind",
+        "url": "http://mailpit.northwind.localhost"
+      },
+      "object-store": {
+        "_tag": "InfraReady",
+        "scope": "shared",
+        "instance": "northwind",
+        "url": "http://object-store.northwind.localhost"
+      },
+      "catalog": {
+        "_tag": "InfraReady",
+        "scope": "shared",
+        "instance": "northwind",
+        "url": "http://catalog.northwind.localhost"
+      },
+      "flags": {
+        "_tag": "InfraReady",
+        "scope": "worktree",
+        "instance": "feat-gift-cards.northwind",
+        "url": "http://flags.feat-gift-cards.northwind.localhost"
+      },
+      "schema-viewer": {
+        "_tag": "InfraReady",
+        "scope": "shared",
+        "instance": "northwind",
+        "url": "http://schema-viewer.northwind.localhost"
+      },
+      "log-viewer": {
+        "_tag": "InfraReady",
+        "scope": "shared",
+        "instance": "northwind",
+        "url": "http://log-viewer.northwind.localhost"
+      },
+      "dev-home": {
+        "_tag": "InfraReady",
+        "scope": "shared",
+        "instance": "northwind",
+        "url": "http://dev-home.northwind.localhost"
+      }
+    }
+  }
+}

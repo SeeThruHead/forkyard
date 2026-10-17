@@ -1,0 +1,6 @@
+{
+  "cli": "/home/dev/forkyard/bin/forkyard",
+  "dashboard": "http://forkyard.localhost",
+  "version": "0.1.0",
+  "protocol": 1
+}

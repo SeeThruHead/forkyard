@@ -23,3 +23,12 @@ These need judgment, so they are not lint rules.
 - Branded types for values that are not really strings or numbers: ids, names that become hostnames, ports, pids, paths. Use the schemas in `src/Ids.ts` and their smart constructors; add one there before passing a bare `string` or `number` around.
 - Single level of abstraction. A function reads at one level: an orchestration step calls named steps and does not also build SQL, parse ports or format strings inline. This is about what a function mixes, not how long it is.
 - Service methods stay small enough to read in one screen. Split by responsibility, not to hit a number.
+
+## The public protocol
+
+The tray app, the terminal UI, the dashboard and other tools talk to the daemon through the RPCs in `src/Protocol.ts`. The public ones are listed in `test/Protocol.test.ts` (`Info`, `Status`, `Usage`, `Up`, `Down`, `Restart`, `Runs`, `RunLog`, `Env`, `DaemonLogs`, `Logs`). Clients may be older than the daemon, so:
+
+- Public RPCs and their fields are only ever added to. Never remove or rename an RPC or a field, and never change what a field means.
+- New fields on anything a client reads are optional, so older daemons' messages still decode.
+- `protocolVersion` in `src/Package.ts` goes up only when a client starts needing something an older daemon lacks. Clients refuse daemons with a lower protocol and say to restart the daemon.
+- When `protocolVersion` goes up, capture that protocol's `Status`, `Usage` and `Info` messages into `test/protocol/v<n>/`, with paths replaced by `/home/dev/...`. Every older fixture must keep decoding.
