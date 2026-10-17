@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url"
 import { Effect, Path, Record, Stream } from "effect"
 import { DaemonLog } from "./DaemonLog.ts"
 import { ProcessUsage } from "./Usage.ts"
@@ -10,6 +11,8 @@ import { Runs } from "./Runs.ts"
 import { Status } from "./Status.ts"
 import { Supervisor } from "./Supervisor.ts"
 import { Worktrees } from "./Worktrees.ts"
+
+const cliPath = fileURLToPath(new URL("../bin/forkyard", import.meta.url))
 
 export const layer = ForkyardRpcs.toLayer(
   Effect.gen(function* () {
@@ -60,6 +63,7 @@ export const layer = ForkyardRpcs.toLayer(
       Infra: () => infra.running,
       DaemonLogs: () => daemonLog.lines,
       Usage: () => usage.changes,
+      Info: () => Effect.succeed({ cli: cliPath, dashboard: "http://forkyard.localhost" }),
       InfraAction: ({ id, infra: name, action }) =>
         supervisor.infraAction(id, name, action).pipe(Effect.mapError((error) => new ForkyardError({ message: error.message })))
     })
