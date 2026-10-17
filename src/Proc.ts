@@ -1,5 +1,5 @@
 import { NodeChildProcessSpawner } from "@effect/platform-node"
-import { Clock, Context, Effect, Layer, Logger, Metric, Schema, type Scope, Stream, type Tracer } from "effect"
+import { Clock, Context, Deferred, Effect, Layer, Logger, Metric, Schema, type Scope, Stream, type Tracer } from "effect"
 import { FetchHttpClient, type HttpClient } from "effect/http"
 import { OtlpExporter, OtlpLogger, OtlpSerialization } from "effect/observability"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
@@ -24,6 +24,7 @@ export type Spawned = {
   readonly run: RunRef
   readonly exited: Effect.Effect<number>
   readonly output: Effect.Effect<ReadonlyArray<string>>
+  readonly logged: Effect.Effect<void>
 }
 
 const mint = (handle: Omit<Spawned, typeof ownedByScope>): Spawned => handle as unknown as Spawned
@@ -34,6 +35,7 @@ export type SpawnOptions = {
   readonly run: Run
   readonly env: Env
   readonly cwd: string
+  readonly readyLine?: RegExp
   readonly telemetry?: {
     readonly namespace: string
     readonly attributes: Readonly<Record<string, string>>
@@ -171,11 +173,23 @@ export class Proc extends Context.Service<
             Effect.ignore
           )
 
-        const forwardOutput = Effect.fnUntraced(function* (spawn: SpawnOptions, handle: Handle, run: RunInfo, span: Tracer.Span) {
+        const signalReadyLine = (spawn: SpawnOptions, logged: Deferred.Deferred<void>) => (entry: OutputLine) =>
+          spawn.readyLine?.test(entry.line) ? Deferred.succeed(logged, undefined) : Effect.void
+
+        const forwardOutput = Effect.fnUntraced(function* (
+          spawn: SpawnOptions,
+          handle: Handle,
+          run: RunInfo,
+          span: Tracer.Span,
+          logged: Deferred.Deferred<void>
+        ) {
           const logger = spawn.telemetry ? yield* processLogger(spawn, run) : undefined
           const exported = exportLine(logger)
+          const readyCheck = signalReadyLine(spawn, logged)
           const publish = ({ entry, record }: { readonly entry: OutputLine; readonly record: RunLine }) =>
-            Effect.all([status.log({ ...record, owner: spawn.owner, service: spawn.service }), exported(entry)], { discard: true })
+            Effect.all([status.log({ ...record, owner: spawn.owner, service: spawn.service }), exported(entry), readyCheck(entry)], {
+              discard: true
+            })
 
           yield* outputPipeline(spawn, handle, run, publish).pipe(
             Effect.withParentSpan(span),
@@ -215,11 +229,18 @@ export class Proc extends Context.Service<
           const pid = Pid.make(Number(handle.pid))
           const run = yield* recordRun(spawn, pid)
           const span = yield* lifetimeSpan(spawn, run)
+          const logged = yield* Deferred.make<void>()
 
-          yield* forwardOutput(spawn, handle, run, span)
+          yield* forwardOutput(spawn, handle, run, span, logged)
           yield* countStart(spawn)
 
-          return mint({ pid, run: runRef(run), exited: exitOf(spawn, handle, run, span), output: recentOutput(run) })
+          return mint({
+            pid,
+            run: runRef(run),
+            exited: exitOf(spawn, handle, run, span),
+            output: recentOutput(run),
+            logged: Deferred.await(logged)
+          })
         })
 
         const failedExec = (spawn: SpawnOptions, code: number, output: string) =>

@@ -51,7 +51,7 @@ export class Registry extends Context.Service<
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       const crypto = yield* Crypto.Crypto
-      const identity: Identity = { daemonId: yield* crypto.randomUUIDv4.pipe(Effect.orDie), bootMinute: yield* bootMinute }
+      const identity: Identity = { daemonId: yield* crypto.randomUUIDv4().pipe(Effect.orDie), bootMinute: yield* bootMinute }
 
       const previousProcesses = sql`SELECT pid, worktree, service, daemon_id, boot_minute FROM processes`.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ProcessRow))),

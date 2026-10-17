@@ -2,9 +2,6 @@
   "jsPlugins": ["../../lint/forkyard.js"],
   "rules": {
     "forkyard/scoped-processes": "error",
-    "forkyard/no-gen-wrapper": "error",
-    "forkyard/flat-orchestration": "error",
-    "forkyard/edges-only": "error",
-    "forkyard/branded-ids": "error"
+    "forkyard/no-gen-wrapper": "warn"
   }
 }

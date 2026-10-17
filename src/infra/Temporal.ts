@@ -50,7 +50,7 @@ export const dev = (options: Options): InfraSpec => {
     })
     yield* readyOrExit(name, started, fetchOk(`http://127.0.0.1:${http}/api/v1/namespaces`), "60 seconds")
     yield* readyOrExit(name, started, fetchOk(`http://127.0.0.1:${ui}/`), "30 seconds")
-    return { port: grpc, env: { TEMPORAL_HTTP_PORT: String(http) }, routes: { temporal: ui } }
+    return { port: grpc, env: { TEMPORAL_HTTP_PORT: String(http) }, routes: { [name]: ui } }
   })
 
   const tenant = Effect.fn("Temporal.tenant")(function* (server: InfraServer, worktree: Worktree, tools: InfraTools) {
@@ -69,7 +69,7 @@ export const dev = (options: Options): InfraSpec => {
     const tenant: TemporalTenant = {
       address: `127.0.0.1:${server.port}`,
       httpUrl: `http://127.0.0.1:${server.env.TEMPORAL_HTTP_PORT}`,
-      uiUrl: server.urls.temporal ?? "",
+      uiUrl: server.urls[name] ?? "",
       namespace
     }
     yield* Effect.annotateCurrentSpan({

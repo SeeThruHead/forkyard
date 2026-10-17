@@ -2,7 +2,7 @@ import { PgClient } from "@effect/sql-pg"
 import { Effect, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { databaseName, InfraName, type Port } from "../Ids.ts"
-import { type Env, InfraError, type InfraServer, type InfraSpec, type InfraTools, type Run, type Worktree } from "../Stack.ts"
+import { cmd, type Env, InfraError, type InfraServer, type InfraSpec, type InfraTools, type Run, toRun, type Worktree } from "../Stack.ts"
 import { containerName, dockerContainer, port, readyOrExit } from "./Shared.ts"
 
 export type Database = {
@@ -12,16 +12,25 @@ export type Database = {
   readonly port: Port
 }
 
+export type Golden = { readonly migrate: string | Run } | { readonly snapshot: { readonly worktree: string } }
+
+export type Copy = "clone" | "full"
+
 type Options = {
   readonly name?: string
   readonly image?: string
   readonly scope: "shared" | "worktree"
   readonly database?: (worktree: Worktree) => string
-  readonly golden?: { readonly migrate: Run }
+  readonly golden?: Golden
+  readonly copy?: Copy
   readonly env?: (database: Database) => Env
 }
 
+const cloningFilesystems = ["btrfs", "xfs", "zfs", "apfs"]
+
 const urlFor = (port: Port, database: string) => `postgres://postgres@127.0.0.1:${port}/${database}`
+
+const majorVersion = (image: string) => Number(/postgres:(\d+)/.exec(image)?.[1] ?? "0")
 
 const onDatabase = <A, E>(port: Port, database: string, effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
   effect.pipe(Effect.provide(PgClient.layer({ url: Redacted.make(urlFor(port, database)) })))
@@ -32,9 +41,33 @@ const exists = Effect.fnUntraced(function* (database: string) {
   return (rows[0]?.n ?? 0) > 0
 })
 
+const closeTo = (database: string) =>
+  SqlClient.SqlClient.use((sql) =>
+    sql`ALTER DATABASE ${sql(database)} WITH ALLOW_CONNECTIONS false`.pipe(
+      Effect.andThen(sql`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${database} AND pid <> pg_backend_pid()`)
+    )
+  )
+
+const openTo = (database: string) => SqlClient.SqlClient.use((sql) => sql`ALTER DATABASE ${sql(database)} WITH ALLOW_CONNECTIONS true`)
+
+const createFrom = (database: string, template: string) =>
+  SqlClient.SqlClient.use((sql) => sql`CREATE DATABASE ${sql(database)} TEMPLATE ${sql(template)} STRATEGY FILE_COPY`)
+
+const seal = (database: string) =>
+  SqlClient.SqlClient.use((sql) => sql`ALTER DATABASE ${sql(database)} WITH ALLOW_CONNECTIONS false IS_TEMPLATE true`)
+
+const dropTemplate = (database: string) =>
+  SqlClient.SqlClient.use((sql) =>
+    sql`ALTER DATABASE ${sql(database)} WITH IS_TEMPLATE false`.pipe(Effect.andThen(sql`DROP DATABASE IF EXISTS ${sql(database)}`))
+  )
+
+const dropDatabase = (database: string) => SqlClient.SqlClient.use((sql) => sql`DROP DATABASE IF EXISTS ${sql(database)} WITH (FORCE)`)
+
 export const docker = (options: Options): InfraSpec => {
   const name = InfraName.make(options.name ?? "postgres")
   const image = options.image ?? "postgres:18"
+  const canClone = majorVersion(image) >= 18
+  const copy: Copy = options.copy ?? (canClone ? "clone" : "full")
   const fail = (message: string) => new InfraError({ infra: name, message })
   const step =
     (label: string) =>
@@ -43,57 +76,123 @@ export const docker = (options: Options): InfraSpec => {
   const onServer = <A, E>(serverPort: Port, label: string, effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
     onDatabase(serverPort, "postgres", effect).pipe(step(label))
 
-  const buildGolden = Effect.fn("Postgres.buildGolden")(
-    function* (serverPort: Port, golden: string, migrate: Run, worktree: Worktree, tools: InfraTools) {
-      yield* onServer(
-        serverPort,
-        "create golden",
-        SqlClient.SqlClient.use((sql) => sql`CREATE DATABASE ${sql(golden)}`)
-      )
-      yield* tools
-        .exec({ name: "golden migrate", run: migrate, env: { DATABASE_URL: urlFor(serverPort, golden) }, cwd: worktree.root })
-        .pipe(Effect.scoped)
-      yield* onServer(
-        serverPort,
-        "seal golden",
-        SqlClient.SqlClient.use((sql) => sql`ALTER DATABASE ${sql(golden)} WITH ALLOW_CONNECTIONS false IS_TEMPLATE true`)
-      )
-    },
-    (effect, _port, golden, _migrate, worktree) =>
-      effect.pipe(Effect.tap(() => Effect.logInfo(`[${name}] built golden template ${golden} from ${worktree.id}`)))
-  )
+  const databaseOf = (worktree: Worktree) => options.database?.(worktree) ?? databaseName(worktree.project, worktree.branch)
+  const goldenOf = (worktree: Worktree) => databaseName(worktree.project, "golden")
+  const sourceOf = (worktree: Worktree, golden: Golden) =>
+    "snapshot" in golden ? databaseName(worktree.project, golden.snapshot.worktree) : undefined
+  const isSnapshotSource = (worktree: Worktree, golden: Golden) => "snapshot" in golden && golden.snapshot.worktree === worktree.branch
 
-  const ensureGolden = Effect.fn("Postgres.ensureGolden")(function* (
+  const migrateGolden = Effect.fn("Postgres.migrateGolden")(function* (
     serverPort: Port,
     golden: string,
     migrate: Run,
     worktree: Worktree,
     tools: InfraTools
   ) {
-    yield* Effect.annotateCurrentSpan({ "db.namespace": golden, "forkyard.worktree": worktree.id })
-    if (yield* onServer(serverPort, "check golden", exists(golden))) return
-
-    yield* buildGolden(serverPort, golden, migrate, worktree, tools)
+    yield* onServer(
+      serverPort,
+      "create golden",
+      SqlClient.SqlClient.use((sql) => sql`CREATE DATABASE ${sql(golden)}`)
+    )
+    yield* tools
+      .exec({ name: "golden migrate", run: migrate, env: { DATABASE_URL: urlFor(serverPort, golden) }, cwd: worktree.root })
+      .pipe(Effect.scoped)
   })
 
+  const snapshotGolden = Effect.fn("Postgres.snapshotGolden")(function* (serverPort: Port, golden: string, source: string) {
+    yield* Effect.annotateCurrentSpan({ "forkyard.db.source": source })
+    if (!(yield* onServer(serverPort, "check snapshot source", exists(source))))
+      return yield* fail(`the golden is a snapshot of ${source}, which does not exist yet. Start that worktree first.`)
+
+    yield* Effect.acquireUseRelease(
+      onServer(serverPort, `close ${source} for a moment`, closeTo(source)),
+      () => onServer(serverPort, "snapshot golden", createFrom(golden, source)),
+      () => onServer(serverPort, `reopen ${source}`, openTo(source)).pipe(Effect.orDie)
+    )
+  })
+
+  const buildGolden = Effect.fn("Postgres.buildGolden")(
+    function* (serverPort: Port, golden: Golden, worktree: Worktree, tools: InfraTools) {
+      const template = goldenOf(worktree)
+      const source = sourceOf(worktree, golden)
+      if ("migrate" in golden) yield* migrateGolden(serverPort, template, toRun(golden.migrate), worktree, tools)
+      if (source) yield* snapshotGolden(serverPort, template, source)
+      yield* onServer(serverPort, "seal golden", seal(template))
+    },
+    (effect, _port, golden, worktree) =>
+      effect.pipe(
+        Effect.tap(() =>
+          Effect.logInfo(
+            `[${name}] built golden ${goldenOf(worktree)} ${"migrate" in golden ? `by migrating, from ${worktree.id}` : `as a snapshot of ${sourceOf(worktree, golden)}`}`
+          )
+        )
+      )
+  )
+
+  const ensureGolden = Effect.fn("Postgres.ensureGolden")(function* (
+    serverPort: Port,
+    golden: Golden,
+    worktree: Worktree,
+    tools: InfraTools
+  ) {
+    yield* Effect.annotateCurrentSpan({ "db.namespace": goldenOf(worktree), "forkyard.worktree": worktree.id })
+    if (yield* onServer(serverPort, "check golden", exists(goldenOf(worktree)))) return
+    yield* buildGolden(serverPort, golden, worktree, tools)
+  })
+
+  const templateFor = (worktree: Worktree) => {
+    if (!options.golden) return undefined
+    if (isSnapshotSource(worktree, options.golden)) return undefined
+    return goldenOf(worktree)
+  }
+
   const createDatabase = Effect.fn("Postgres.createDatabase")(function* (serverPort: Port, database: string, template: string | undefined) {
-    yield* Effect.annotateCurrentSpan({ "db.namespace": database, "forkyard.db.template": template ?? "" })
+    yield* Effect.annotateCurrentSpan({ "db.namespace": database, "forkyard.db.template": template ?? "", "forkyard.db.copy": copy })
     yield* onServer(
       serverPort,
       "create database",
-      SqlClient.SqlClient.use((sql) =>
-        template
-          ? sql`CREATE DATABASE ${sql(database)} TEMPLATE ${sql(template)} STRATEGY FILE_COPY`
-          : sql`CREATE DATABASE ${sql(database)}`
+      template ? createFrom(database, template) : SqlClient.SqlClient.use((sql) => sql`CREATE DATABASE ${sql(database)}`)
+    )
+  })
+
+  const ensureDatabase = Effect.fnUntraced(function* (serverPort: Port, database: string, template: string | undefined) {
+    if (yield* onServer(serverPort, "check database", exists(database))) return false
+    yield* createDatabase(serverPort, database, template)
+    return true
+  })
+
+  const warnIfClonesCopy = Effect.fn("Postgres.checkClone")(function* (container: string, tools: InfraTools) {
+    const filesystem = yield* tools
+      .exec({
+        name: "volume filesystem",
+        run: cmd("docker", "exec", container, "stat", "-f", "-c", "%T", "/var/lib/postgresql"),
+        env: {},
+        cwd: "/"
+      })
+      .pipe(
+        Effect.scoped,
+        Effect.map((output) => output.trim()),
+        Effect.orElseSucceed(() => "unknown")
       )
+    yield* Effect.annotateCurrentSpan({ "forkyard.db.volume_filesystem": filesystem })
+    if (cloningFilesystems.includes(filesystem)) return
+    yield* Effect.logWarning(
+      `[${name}] copy is "clone" but the data volume is on ${filesystem}, which cannot share blocks: every worktree database will be a full copy`
     )
   })
 
   const start = Effect.fn("Postgres.start")(function* (instance: string, tools: InfraTools) {
+    if (copy === "clone" && !canClone) return yield* fail(`copy "clone" needs Postgres 18 or newer, and the image is ${image}`)
+
     const container = containerName(name, instance)
     const hostPort = yield* port(name)
-    const clone = image.startsWith("postgres:18") ? ["-c", "file_copy_method=clone"] : []
-    yield* Effect.annotateCurrentSpan({ "db.system.name": "postgresql", "container.image.name": image, "server.port": hostPort })
+    const cloneFlags = copy === "clone" ? ["-c", "file_copy_method=clone"] : []
+    yield* Effect.annotateCurrentSpan({
+      "db.system.name": "postgresql",
+      "container.image.name": image,
+      "server.port": hostPort,
+      "forkyard.db.copy": copy
+    })
     const started = yield* dockerContainer(tools, {
       infra: name,
       name: container,
@@ -104,8 +203,10 @@ export const docker = (options: Options): InfraSpec => {
         "POSTGRES_HOST_AUTH_METHOD=trust",
         "-v",
         `${container}-data:/var/lib/postgresql`,
+        "--stop-signal",
+        "SIGINT",
         image,
-        ...clone
+        ...cloneFlags
       ]
     })
     yield* readyOrExit(
@@ -118,24 +219,56 @@ export const docker = (options: Options): InfraSpec => {
       ),
       "60 seconds"
     )
+    if (copy === "clone") yield* warnIfClonesCopy(container, tools)
     return { port: hostPort, env: {}, routes: {} }
   })
 
-  const tenant = Effect.fn("Postgres.tenant")(function* (server: InfraServer, worktree: Worktree, tools: InfraTools) {
-    if (!server.port) return yield* new InfraError({ infra: name, message: "server has no port" })
-    const serverPort = server.port
-    const database = options.database?.(worktree) ?? databaseName(worktree.project, worktree.branch)
-    const template = options.golden ? databaseName(worktree.project, "golden") : undefined
-    yield* Effect.annotateCurrentSpan({ "db.system.name": "postgresql", "db.namespace": database, "forkyard.worktree": worktree.id })
-    if (options.golden && template) yield* server.exclusive(ensureGolden(serverPort, template, options.golden.migrate, worktree, tools))
+  const serverPortOf = (server: InfraServer) => (server.port ? Effect.succeed(server.port) : Effect.fail(fail("server has no port")))
 
-    const present = yield* onServer(serverPort, "check database", exists(database))
-    yield* Effect.annotateCurrentSpan({ "forkyard.db.created": !present })
-    if (!present) yield* createDatabase(serverPort, database, template)
+  const tenant = Effect.fn("Postgres.tenant")(function* (server: InfraServer, worktree: Worktree, tools: InfraTools) {
+    const serverPort = yield* serverPortOf(server)
+    const database = databaseOf(worktree)
+    const template = templateFor(worktree)
+    yield* Effect.annotateCurrentSpan({ "db.system.name": "postgresql", "db.namespace": database, "forkyard.worktree": worktree.id })
+    if (template && options.golden) yield* server.exclusive(ensureGolden(serverPort, options.golden, worktree, tools))
+
+    const created = yield* server.exclusive(ensureDatabase(serverPort, database, template))
+    yield* Effect.annotateCurrentSpan({ "forkyard.db.created": created })
 
     const url = urlFor(serverPort, database)
     return options.env?.({ url, database, host: "127.0.0.1", port: serverPort }) ?? { DATABASE_URL: url }
   })
 
-  return { name, scope: options.scope, start, tenant }
+  const refreshGolden = Effect.fn("Postgres.refreshGolden")(function* (server: InfraServer, worktree: Worktree, tools: InfraTools) {
+    if (!options.golden) return yield* fail("this Postgres has no golden configured")
+    const serverPort = yield* serverPortOf(server)
+    const golden = options.golden
+    yield* server.exclusive(
+      onServer(serverPort, "drop old golden", dropTemplate(goldenOf(worktree))).pipe(
+        Effect.andThen(buildGolden(serverPort, golden, worktree, tools))
+      )
+    )
+    return `rebuilt ${goldenOf(worktree)}; new worktrees and reset databases start from it`
+  })
+
+  const resetDatabase = Effect.fn("Postgres.resetDatabase")(function* (server: InfraServer, worktree: Worktree, tools: InfraTools) {
+    const serverPort = yield* serverPortOf(server)
+    const database = databaseOf(worktree)
+    const template = templateFor(worktree)
+    if (options.golden && isSnapshotSource(worktree, options.golden))
+      return yield* fail(`${database} is the snapshot source; it is never reset`)
+    if (template && options.golden) yield* server.exclusive(ensureGolden(serverPort, options.golden, worktree, tools))
+    yield* server.exclusive(
+      onServer(serverPort, "drop database", dropDatabase(database)).pipe(Effect.andThen(createDatabase(serverPort, database, template)))
+    )
+    return `recreated ${database}${template ? ` from ${template}` : ""}; restart services that keep connections open`
+  })
+
+  return {
+    name,
+    scope: options.scope,
+    start,
+    tenant,
+    actions: { "refresh-golden": refreshGolden, "reset-database": resetDatabase }
+  }
 }

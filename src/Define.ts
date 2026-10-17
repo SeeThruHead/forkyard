@@ -1,10 +1,22 @@
 import { Effect } from "effect"
 import type { EnvSource } from "./EnvSource.ts"
-import { Infra, type InfraRef, type InfraSpec, make, type Run, Service, type ServiceRef, serviceRef, type Stack } from "./Stack.ts"
+import {
+  Infra,
+  type InfraRef,
+  type InfraSpec,
+  make,
+  type Run,
+  Service,
+  type ServiceRef,
+  serviceRef,
+  type Stack,
+  type Watch
+} from "./Stack.ts"
 
 type ServiceDef<Names extends string, InfraNames extends string> = {
   readonly kind: "http" | "worker" | "task"
-  readonly run: Run
+  readonly run: string | Run
+  readonly watch?: Watch
   readonly cwd?: string
   readonly envFrom?: ReadonlyArray<EnvSource>
   readonly uses?: ReadonlyArray<NoInfer<InfraNames>>
@@ -28,6 +40,12 @@ const referenceServices = (names: ReadonlyArray<string>) =>
     Effect.map((entries): Readonly<Record<string, ServiceRef>> => Object.fromEntries(entries))
   )
 
+const shapeOf = <Names extends string, InfraNames extends string>(def: ServiceDef<Names, InfraNames>) => {
+  if (def.kind === "http") return { route: true, ready: "healthy" as const }
+  if (def.kind === "worker") return { ready: "started" as const }
+  return { ready: "exited" as const, ...(def.watch ? { watch: def.watch } : {}) }
+}
+
 export const defineStack = <const InfraNames extends string, const Names extends string>(
   definition: Definition<InfraNames, Names>
 ): Stack =>
@@ -40,7 +58,8 @@ export const defineStack = <const InfraNames extends string, const Names extends
       const urls = Object.fromEntries(Object.entries(refs).map(([name, ref]) => [name, ref.url])) as Readonly<Record<Names, string>>
 
       yield* Effect.forEach(entries, ([name, def]) =>
-        Service[def.kind](name, {
+        Service.process(name, {
+          ...shapeOf(def),
           run: def.run,
           cwd: def.cwd ?? ".",
           envFrom: def.envFrom ?? [],

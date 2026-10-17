@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 import { Rpc, RpcGroup } from "effect/rpc"
-import { AbsolutePath, ProcessOwner, RunId, ServiceName, WorktreeId } from "./Ids.ts"
-import { EnvVar, LogLine, RunInfo, RunLine, Snapshot } from "./Model.ts"
+import { AbsolutePath, InfraName, ProcessOwner, RunId, ServiceName, WorktreeId } from "./Ids.ts"
+import { DaemonLine, EnvVar, LogLine, RunInfo, RunLine, Snapshot } from "./Model.ts"
 
 export class ForkyardError extends Schema.TaggedError<ForkyardError>()("ForkyardError", {
   message: Schema.String
@@ -23,5 +23,11 @@ export class ForkyardRpcs extends RpcGroup.make(
   Rpc.make("Runs", { payload: { owner: ProcessOwner, service: Schema.String }, success: Schema.Array(RunInfo) }),
   Rpc.make("RunLog", { payload: { runId: RunId }, success: RunLine, stream: true }),
   Rpc.make("Routes", { success: Schema.Record(Schema.String, Schema.Number) }),
-  Rpc.make("Infra", { success: Schema.Array(Schema.String) })
+  Rpc.make("Infra", { success: Schema.Array(Schema.String) }),
+  Rpc.make("DaemonLogs", { success: DaemonLine, stream: true }),
+  Rpc.make("InfraAction", {
+    payload: { ...InWorktree, infra: InfraName, action: Schema.String },
+    success: Schema.String,
+    error: ForkyardError
+  })
 ) {}

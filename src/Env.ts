@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, FileSystem, Layer, Metric, Option, Ref } from "effect"
+import { Clock, Context, Effect, FiberSet, FileSystem, Layer, Metric, Option, Ref } from "effect"
 import { EnvError, type EnvEntry, type EnvLoadContext, type EnvSource, looksSensitive } from "./EnvSource.ts"
 import { ownerOfWorktree, type Port, type ServiceName, type WorktreeId } from "./Ids.ts"
 import * as Metrics from "./Metrics.ts"
@@ -21,23 +21,36 @@ const redact = (value: string) => (value.length <= 4 ? "****" : `${value.slice(0
 const warningFor = (key: string, value: string) =>
   fixedPort.test(value) ? `${key} points at a fixed port. Map it in forkyard.config.ts so each worktree gets its own.` : undefined
 
-const visibleToSources = (key: string) => !key.startsWith("OTEL_") && key !== "NODE_OPTIONS"
+const visibleToSources = (key: string) => !key.startsWith("OTEL_") && key !== "NODE_OPTIONS" && key !== "PATH"
 
 const keyOf = (id: WorktreeId, service: ServiceName) => `${id}/${service}`
 
 export const owned = (source: string, env: Env): OwnedEnv =>
   Object.fromEntries(Object.entries(env).map(([key, value]) => [key, { value, source }]))
 
-export const daemonEnv = (worktree: Worktree, service: ServiceName, port: Port | undefined, otlpUrl: string): OwnedEnv => ({
+const repoBins = (worktree: Worktree, cwd: string, basePath: string) =>
+  [`${worktree.root}/${cwd}/node_modules/.bin`, `${worktree.root}/node_modules/.bin`, basePath]
+    .filter((entry) => entry.length > 0)
+    .join(":")
+
+export type DaemonContext = { readonly otlpUrl: string; readonly basePath: string }
+
+export const daemonEnv = (
+  worktree: Worktree,
+  service: { readonly name: ServiceName; readonly cwd: string },
+  port: Port | undefined,
+  { otlpUrl, basePath }: DaemonContext
+): OwnedEnv => ({
   ...owned("forkyard", {
+    PATH: repoBins(worktree, service.cwd, basePath),
     FORKYARD_WORKTREE: worktree.id,
     FORKYARD_BRANCH: worktree.branch,
-    FORKYARD_SERVICE: service,
+    FORKYARD_SERVICE: service.name,
     ...(port ? { PORT: String(port) } : {})
   }),
   ...owned("forkyard:otel", {
     OTEL_EXPORTER_OTLP_ENDPOINT: otlpUrl,
-    OTEL_SERVICE_NAME: service,
+    OTEL_SERVICE_NAME: service.name,
     OTEL_RESOURCE_ATTRIBUTES: `service.namespace=${worktree.id},forkyard.worktree=${worktree.id},forkyard.project=${worktree.project},forkyard.branch=${worktree.branch}`
   })
 })
@@ -84,6 +97,7 @@ export class EnvResolver extends Context.Service<
       const fs = yield* FileSystem.FileSystem
       const reports = yield* Ref.make<Readonly<Record<string, ReadonlyArray<EnvVar>>>>({})
       const pristineCache = yield* Ref.make<Readonly<Record<string, SourcedEnv>>>({})
+      const background = yield* FiberSet.make()
 
       const readFile = (path: string) =>
         fs.exists(path).pipe(
@@ -138,18 +152,22 @@ export class EnvResolver extends Context.Service<
           )
         )
 
+      const record = (worktree: Worktree, service: ServiceNode, vars: ReadonlyArray<EnvVar>) =>
+        Ref.update(reports, (all) => ({ ...all, [keyOf(worktree.id, service.name)]: shown(vars) }))
+
+      const reportWithOriginals = (worktree: Worktree, service: ServiceNode, ownedEnv: OwnedEnv, sourced: SourcedEnv) =>
+        pristine(worktree, service).pipe(Effect.flatMap((before) => record(worktree, service, mergeEnv(sourced, before, ownedEnv))))
+
       const resolve = Effect.fn("Env.resolve")(function* (worktree: Worktree, service: ServiceNode, ownedEnv: OwnedEnv) {
         yield* Effect.annotateCurrentSpan({ "forkyard.worktree": worktree.id, "forkyard.service": service.name })
         const began = yield* Clock.currentTimeMillis
 
-        const [sourced, before] = yield* Effect.all([loadSources(worktree, service, ownedEnv), pristine(worktree, service)], {
-          concurrency: 2
-        })
-        const vars = mergeEnv(sourced, before, ownedEnv)
+        const sourced = yield* loadSources(worktree, service, ownedEnv)
+        const vars = mergeEnv(sourced, {}, ownedEnv)
+        yield* record(worktree, service, vars)
+        yield* FiberSet.run(background, reportWithOriginals(worktree, service, ownedEnv, sourced))
 
-        yield* Ref.update(reports, (all) => ({ ...all, [keyOf(worktree.id, service.name)]: shown(vars) }))
         yield* recordTiming(service, began)
-
         return valuesOf(vars)
       })
 

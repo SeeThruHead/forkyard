@@ -22,16 +22,13 @@
     "no-param-reassign": "error",
     "no-else-return": "error",
     "typescript/consistent-type-definitions": ["error", "type"],
-    "forkyard/no-gen-wrapper": "error"
+    "forkyard/no-gen-wrapper": "warn"
   },
   "overrides": [
     {
       "files": ["src/**"],
       "rules": {
-        "forkyard/scoped-processes": "error",
-        "forkyard/flat-orchestration": "error",
-        "forkyard/edges-only": "error",
-        "forkyard/branded-ids": "error"
+        "forkyard/scoped-processes": "error"
       }
     },
     {

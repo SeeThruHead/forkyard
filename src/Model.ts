@@ -91,6 +91,9 @@ export const EnvVar = Schema.Struct({
 })
 export type EnvVar = typeof EnvVar.Type
 
+export const DaemonLine = Schema.Struct({ at: Schema.Number, level: Schema.String, message: Schema.String })
+export type DaemonLine = typeof DaemonLine.Type
+
 export const runOf = (state: ServiceState): RunRef | undefined => ("run" in state ? state.run : undefined)
 
 export const stateLabel = (state: ServiceState) => state._tag.toLowerCase()

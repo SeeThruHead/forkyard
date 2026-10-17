@@ -1,5 +1,6 @@
 import { NodeRuntime } from "@effect/platform-node"
 import { Config, Effect, FileSystem, Layer, Path } from "effect"
+import { availableParallelism } from "node:os"
 import { fileURLToPath } from "node:url"
 import * as Daemon from "./Daemon.ts"
 import { Port } from "./Ids.ts"
@@ -11,6 +12,7 @@ const settings = Config.all({
   proxyPort: Config.Port("FORKYARD_PROXY_PORT").pipe(Config.withDefault(80)),
   httpPort: Config.Port("FORKYARD_HTTP_PORT").pipe(Config.withDefault(4949)),
   maplePort: Config.Port("FORKYARD_MAPLE_PORT").pipe(Config.withDefault(14418)),
+  startupConcurrency: Config.Int("FORKYARD_STARTUP_CONCURRENCY").pipe(Config.withDefault(availableParallelism())),
   upstreamHost: Config.String("FORKYARD_UPSTREAM_HOST").pipe(Config.withDefault("host.docker.internal")),
   dashboardDir: Config.String("FORKYARD_DASHBOARD_DIR").pipe(
     Config.withDefault(fileURLToPath(new URL("../dashboard/dist", import.meta.url)))
@@ -42,7 +44,8 @@ const optionsFor = (home: string, path: Path.Path, config: Settings): Daemon.Dae
   maplePort: Port.make(config.maplePort),
   dashboardDir: config.dashboardDir,
   domain: "localhost",
-  version: "0.1.0"
+  version: "0.1.0",
+  startupConcurrency: config.startupConcurrency
 })
 
 export const runDaemon = Effect.fn("runDaemon")(function* (home: string) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Effect, Option } from "effect"
-import { dotenv, type EnvLoadContext } from "../src/EnvSource.ts"
+import { dotenv, type EnvLoadContext, varlock } from "../src/EnvSource.ts"
 import { mergeEnv } from "../src/Env.ts"
 
 const files: Readonly<Record<string, string>> = {
@@ -45,4 +45,25 @@ describe("env", () => {
     expect(vars.ANALYTICS_URL?.warning).toContain("fixed port")
     expect(vars.DATABASE_URL?.warning).toBeUndefined()
   })
+
+  it.effect("varlock items without a value (unset @optional keys) are skipped, not an error", () =>
+    Effect.gen(function* () {
+      const output = JSON.stringify({
+        config: {
+          DB_PORT: { value: 6111, isSensitive: false },
+          HEALTH_PORT: { isSensitive: false },
+          API_KEY: { value: "k", isSensitive: true }
+        }
+      })
+      const withVarlock: EnvLoadContext = {
+        ...context,
+        readFile: (path) => Effect.succeed(path.endsWith("/varlock") ? Option.some("") : Option.none()),
+        exec: () => Effect.succeed(output)
+      }
+      const env = yield* varlock({ schema: "env/.env.api.schema" }).load(withVarlock).pipe(Effect.scoped)
+      expect(env.DB_PORT?.value).toBe("6111")
+      expect(env.API_KEY?.sensitive).toBe(true)
+      expect("HEALTH_PORT" in env).toBe(false)
+    })
+  )
 })

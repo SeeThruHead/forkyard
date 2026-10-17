@@ -3,8 +3,9 @@ import { Console, Effect, FileSystem, Layer, Option, Path, Stream } from "effect
 import { Argument, Command, Flag } from "effect/cli"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { ForkyardClient } from "../src/Client.ts"
-import { AbsolutePath, ownerOfWorktree, ServiceName, type WorktreeId } from "../src/Ids.ts"
+import { AbsolutePath, InfraName, ownerOfWorktree, ServiceName, type WorktreeId } from "../src/Ids.ts"
 import { defaultHome, runDaemon } from "../src/main-daemon.ts"
+import { attach as attachTui } from "../tui/Attach.ts"
 import { type EnvVar, isSettled, runOf, serviceUrl, type Snapshot, stateDetail, stateLabel, type WorktreeView } from "../src/Model.ts"
 
 const home = process.env.FORKYARD_HOME ?? defaultHome
@@ -153,6 +154,29 @@ const logs = Command.make("logs", { service: serviceArgument }, ({ service }) =>
   }).pipe(Effect.scoped, Effect.provide(client))
 ).pipe(Command.withDescription("Follow the current run's logs for a service"))
 
-const forkyard = Command.make("forkyard").pipe(Command.withSubcommands([daemon, up, down, status, env, logs]))
+const infraArgument = Argument.String("infra").pipe(Argument.withDescription("Infra name from forkyard.config.ts, e.g. postgres"))
+const actionArgument = Argument.String("action").pipe(Argument.withDescription("What to do, e.g. refresh-golden or reset-database"))
+
+const infraCommand = Command.make("infra", { infra: infraArgument, action: actionArgument }, ({ infra, action }) =>
+  Effect.gen(function* () {
+    const forkyard = yield* ForkyardClient
+    const worktree = yield* runningHere()
+    const result = yield* forkyard.InfraAction({ id: worktree.id, infra: InfraName.make(infra), action })
+
+    yield* Console.log(result)
+  }).pipe(Effect.scoped, Effect.provide(client))
+).pipe(Command.withDescription("Run an action on this worktree's infra, e.g. forkyard infra postgres refresh-golden"))
+
+const attach = Command.make("attach", {}, () =>
+  Effect.gen(function* () {
+    const root = yield* findRoot(process.cwd()).pipe(Effect.option)
+    const worktrees = Object.values(yield* snapshot)
+    const here = worktrees.find((worktree) => Option.isSome(root) && worktree.root === root.value)
+
+    yield* attachTui(yield* Effect.context<ForkyardClient>(), here?.id)
+  }).pipe(Effect.scoped, Effect.provide(client))
+).pipe(Command.withDescription("Open the terminal UI: every worktree, then each one's services, logs, env and restarts"))
+
+const forkyard = Command.make("forkyard").pipe(Command.withSubcommands([daemon, up, down, status, env, logs, attach, infraCommand]))
 
 forkyard.pipe(Command.run({ version: "0.1.0" }), Effect.provide(NodeServices.layer), NodeRuntime.runMain)

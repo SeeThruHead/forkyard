@@ -13,6 +13,7 @@ import {
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import { createServer } from "node:http"
 import * as Api from "./Api.ts"
+import { DaemonLog } from "./DaemonLog.ts"
 import { EnvResolver } from "./Env.ts"
 import type { Port } from "./Ids.ts"
 import { InfraManager } from "./InfraManager.ts"
@@ -40,6 +41,7 @@ export type DaemonOptions = {
   readonly dashboardDir: string
   readonly domain: string
   readonly version: string
+  readonly startupConcurrency: number
 }
 
 const forwardToMaple = Effect.fn("Daemon.forwardToMaple")(
@@ -108,7 +110,7 @@ export const layer = (options: DaemonOptions) => {
   )
 
   const worktrees = Worktrees.layer({ domain: options.domain, proxyPort: options.proxyPort }).pipe(
-    Layer.provideMerge(Supervisor.layer({ startupConcurrency: 6, otlpUrl })),
+    Layer.provideMerge(Supervisor.layer({ startupConcurrency: options.startupConcurrency, otlpUrl })),
     Layer.provideMerge(EnvResolver.layer),
     Layer.provideMerge(InfraManager.layer({ domain: options.domain, proxyPort: options.proxyPort }))
   )
@@ -131,5 +133,11 @@ export const layer = (options: DaemonOptions) => {
     })
   )
 
-  return servers.pipe(Layer.provide(Api.layer), Layer.provideMerge(worktrees), Layer.provide(telemetry), Layer.provideMerge(processes))
+  return servers.pipe(
+    Layer.provide(Api.layer),
+    Layer.provideMerge(worktrees),
+    Layer.provide(telemetry),
+    Layer.provideMerge(processes),
+    Layer.provide(DaemonLog.logging)
+  )
 }

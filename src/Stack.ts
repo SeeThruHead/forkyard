@@ -1,4 +1,4 @@
-import { Context, Effect, Ref, Schema, type Scope } from "effect"
+import { Context, type Duration, Effect, Ref, Schema, type Scope } from "effect"
 import type { EnvSource } from "./EnvSource.ts"
 import {
   type AbsolutePath,
@@ -69,26 +69,47 @@ export type InfraServer = InfraStarted & {
   readonly exclusive: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
 }
 
+export type InfraAction = (server: InfraServer, worktree: Worktree, tools: InfraTools) => Effect.Effect<string, InfraError, Scope.Scope>
+
 export type InfraSpec = {
   readonly name: InfraName
   readonly scope: "worktree" | "shared"
-  readonly start: (instance: string, tools: InfraTools) => Effect.Effect<InfraStarted, InfraError, Scope.Scope>
+  readonly sharedBy?: "machine" | "project"
+  readonly uses?: ReadonlyArray<InfraSpec>
+  readonly actions?: Readonly<Record<string, InfraAction>>
+  readonly start: (
+    instance: string,
+    tools: InfraTools,
+    origin: Worktree,
+    usesEnv: Env
+  ) => Effect.Effect<InfraStarted, InfraError, Scope.Scope>
   readonly tenant: (server: InfraServer, worktree: Worktree, tools: InfraTools) => Effect.Effect<Env, InfraError, Scope.Scope>
 }
 
-export type ServiceKind = "http" | "worker" | "task"
+export type Exposure = { readonly _tag: "Routed"; readonly health: string } | { readonly _tag: "Internal" }
+
+export type Readiness = { readonly _tag: "Started" } | { readonly _tag: "Healthy" } | { readonly _tag: "LogLine"; readonly pattern: RegExp }
+
+export type OnExit = "restart" | "restart-on-failure" | "stop"
+
+export type Watch = { readonly globs: ReadonlyArray<string>; readonly debounce: Duration.Input }
+
+export type Lifecycle =
+  | { readonly _tag: "LongRunning"; readonly ready: Readiness; readonly onExit: OnExit; readonly watch: Watch | undefined }
+  | { readonly _tag: "RunOnce"; readonly watch: Watch | undefined }
 
 export type ServiceNode = {
   readonly _tag: "Service"
   readonly name: ServiceName
-  readonly kind: ServiceKind
   readonly run: Run
   readonly cwd: string
   readonly env: Env
   readonly envFrom: ReadonlyArray<EnvSource>
   readonly uses: ReadonlyArray<InfraName>
   readonly after: ReadonlyArray<ServiceName>
-  readonly health: string
+  readonly ports: ReadonlyArray<string>
+  readonly exposure: Exposure
+  readonly lifecycle: Lifecycle
 }
 
 export type InfraNode = {
@@ -116,49 +137,102 @@ export type InfraRef = { readonly infra: InfraName }
 
 export type ServiceRef = { readonly service: ServiceName; readonly url: string }
 
-type ServiceProps = {
-  readonly run: Run
+type CommonProps = {
+  readonly run: string | Run
   readonly cwd?: string
   readonly env?: Env
   readonly envFrom?: ReadonlyArray<EnvSource>
   readonly uses?: ReadonlyArray<InfraRef>
   readonly after?: ReadonlyArray<ServiceRef>
-  readonly health?: string
+  readonly ports?: ReadonlyArray<string>
 }
+
+type HttpProps = CommonProps & { readonly health?: string; readonly onExit?: OnExit; readonly watch?: Watch }
+
+type WorkerProps = CommonProps & { readonly ready?: "started" | Readiness; readonly onExit?: OnExit; readonly watch?: Watch }
+
+type TaskProps = CommonProps & { readonly watch?: Watch }
+
+type ProcessProps = CommonProps & {
+  readonly route?: boolean
+  readonly health?: string
+  readonly ready?: "started" | "healthy" | "exited" | Readiness
+  readonly onExit?: OnExit
+  readonly watch?: Watch
+}
+
+export const shell = (command: string): Run => ({ command: "/bin/sh", args: ["-c", command] })
+
+export const toRun = (run: string | Run): Run => (typeof run === "string" ? shell(run) : run)
+
+export const logLine = (pattern: RegExp): Readiness => ({ _tag: "LogLine", pattern })
+
+export const watch = (...globs: ReadonlyArray<string>): Watch => ({ globs, debounce: "300 millis" })
 
 const serviceName = (name: string) =>
   ServiceName.makeEffect(name).pipe(
     Effect.mapError(() => new ConfigError({ message: `"${name}" is not a valid service name: use lowercase letters, digits and dashes` }))
   )
 
-const serviceNode = (kind: ServiceKind, name: ServiceName, props: ServiceProps): ServiceNode => ({
-  _tag: "Service",
-  name,
-  kind,
-  run: props.run,
-  cwd: props.cwd ?? ".",
-  env: props.env ?? {},
-  envFrom: props.envFrom ?? [],
-  uses: (props.uses ?? []).map((ref) => ref.infra),
-  after: (props.after ?? []).map((ref) => ref.service),
-  health: props.health ?? "/health"
-})
+const toReadiness = (ready: "started" | "healthy" | Readiness): Readiness => {
+  if (ready === "started") return { _tag: "Started" }
+  if (ready === "healthy") return { _tag: "Healthy" }
+  return ready
+}
 
-const declare = (kind: ServiceKind) =>
-  Effect.fn(`Service.${kind}`)(function* (rawName: string, props: ServiceProps) {
-    const builder = yield* StackBuilder
-    const worktree = yield* CurrentWorktree
-    const name = yield* serviceName(rawName)
+const invalid = (name: string, problem: string) => new ConfigError({ message: `${name}: ${problem}` })
 
-    yield* builder.add(serviceNode(kind, name, props))
+const runOnceShape = (
+  name: string,
+  props: ProcessProps
+): Effect.Effect<{ readonly exposure: Exposure; readonly lifecycle: Lifecycle }, ConfigError> => {
+  if (props.route) return Effect.fail(invalid(name, "a process that runs once cannot have a route"))
+  if (props.onExit) return Effect.fail(invalid(name, "a process that runs once has no onExit policy, it is not restarted"))
+  return Effect.succeed({ exposure: { _tag: "Internal" }, lifecycle: { _tag: "RunOnce", watch: props.watch } })
+}
 
-    return { service: name, url: urlOf(worktree, name) } satisfies ServiceRef
+const longRunningShape = (
+  name: string,
+  props: ProcessProps,
+  requested: "started" | "healthy" | Readiness | undefined
+): Effect.Effect<{ readonly exposure: Exposure; readonly lifecycle: Lifecycle }, ConfigError> => {
+  const ready = toReadiness(requested ?? (props.route ? "healthy" : "started"))
+  const exposure: Exposure = props.route ? { _tag: "Routed", health: props.health ?? "/health" } : { _tag: "Internal" }
+
+  if (ready._tag === "Healthy" && exposure._tag === "Internal") return Effect.fail(invalid(name, "a health check needs a route"))
+  return Effect.succeed({ exposure, lifecycle: { _tag: "LongRunning", ready, onExit: props.onExit ?? "restart", watch: props.watch } })
+}
+
+const shapeOf = (name: string, props: ProcessProps) =>
+  props.ready === "exited" ? runOnceShape(name, props) : longRunningShape(name, props, props.ready)
+
+const declare = Effect.fn("Service.process")(function* (rawName: string, props: ProcessProps) {
+  const builder = yield* StackBuilder
+  const worktree = yield* CurrentWorktree
+  const name = yield* serviceName(rawName)
+  const shape = yield* shapeOf(name, props)
+
+  yield* builder.add({
+    _tag: "Service",
+    name,
+    run: toRun(props.run),
+    cwd: props.cwd ?? ".",
+    env: props.env ?? {},
+    envFrom: props.envFrom ?? [],
+    uses: (props.uses ?? []).map((ref) => ref.infra),
+    after: (props.after ?? []).map((ref) => ref.service),
+    ports: props.ports ?? [],
+    ...shape
   })
 
+  return { service: name, url: urlOf(worktree, name) } satisfies ServiceRef
+})
+
 export const Service = {
-  http: declare("http"),
-  worker: declare("worker"),
-  task: declare("task")
+  process: declare,
+  http: (name: string, props: HttpProps) => declare(name, { ...props, route: true, ready: "healthy" }),
+  worker: (name: string, props: WorkerProps) => declare(name, { ...props, ready: props.ready ?? "started" }),
+  task: (name: string, props: TaskProps) => declare(name, { ...props, ready: "exited" })
 }
 
 export const serviceRef = Effect.fn("serviceRef")(function* (rawName: string) {
@@ -178,9 +252,41 @@ export const Infra = Effect.fn("Infra")(function* (spec: InfraSpec) {
   return { infra: spec.name } satisfies InfraRef
 })
 
-export const node = (script: string, ...args: ReadonlyArray<string>): Run => ({
-  command: process.execPath,
-  args: [script, ...args]
+type NodeOptions = {
+  readonly args?: ReadonlyArray<string>
+}
+
+type BunOptions = {
+  readonly watch?: boolean
+  readonly args?: ReadonlyArray<string>
+}
+
+type TsNodeOptions = {
+  readonly transpileOnly?: boolean
+  readonly require?: ReadonlyArray<string>
+  readonly args?: ReadonlyArray<string>
+}
+
+const flag = (enabled: boolean | undefined, name: string) => (enabled ? [name] : [])
+
+export const node = (file: string, options: NodeOptions = {}): Run => ({
+  command: "node",
+  args: [file, ...(options.args ?? [])]
+})
+
+export const bun = (file: string, options: BunOptions = {}): Run => ({
+  command: "bun",
+  args: [...flag(options.watch, "--watch"), file, ...(options.args ?? [])]
+})
+
+export const tsNode = (file: string, options: TsNodeOptions = {}): Run => ({
+  command: "ts-node",
+  args: [
+    ...flag(options.transpileOnly ?? true, "--transpile-only"),
+    ...(options.require ?? []).flatMap((module) => ["-r", module]),
+    file,
+    ...(options.args ?? [])
+  ]
 })
 
 export const cmd = (command: string, ...args: ReadonlyArray<string>): Run => ({ command, args })

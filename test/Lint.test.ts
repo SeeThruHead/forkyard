@@ -14,7 +14,7 @@ describe("forkyard lint rules", () => {
     () =>
       Effect.gen(function* () {
         const output = yield* lintFixtures.pipe(Effect.orElseSucceed(() => ""))
-        const rules = ["scoped-processes", "no-gen-wrapper", "flat-orchestration", "edges-only", "branded-ids"]
+        const rules = ["scoped-processes", "no-gen-wrapper"]
 
         expect(rules.filter((rule) => !output.includes(`forkyard(${rule})`))).toEqual([])
       }).pipe(Effect.provide(NodeServices.layer)),

@@ -7,14 +7,15 @@ import type { Node, ServiceNode } from "../src/Stack.ts"
 const service = (name: string, after: ReadonlyArray<string> = []): ServiceNode => ({
   _tag: "Service",
   name: ServiceName.make(name),
-  kind: "http",
   run: { command: "node", args: [] },
   cwd: ".",
   env: {},
   envFrom: [],
   uses: [],
   after: after.map((dependency) => ServiceName.make(dependency)),
-  health: "/health"
+  ports: [],
+  exposure: { _tag: "Internal" },
+  lifecycle: { _tag: "LongRunning", ready: { _tag: "Started" }, onExit: "restart", watch: undefined }
 })
 
 describe("Plan", () => {

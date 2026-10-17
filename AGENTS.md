@@ -8,12 +8,18 @@ Never add AI or agent attribution to anything in this repository: no co-author t
 
 `just` lists everything. `just setup` installs dependencies and git hooks, `just check` runs format, lint, typecheck and tests, `just daemon` runs forkyard, `just tour` runs the example tour. Each recipe calls a package script, so there is one definition of each command.
 
-## Code rules the linter enforces
+## What the linter enforces
 
-`pnpm run lint` runs oxlint with the rules in `lint/forkyard.js`:
+`pnpm run lint` runs oxlint with the project rules in `lint/forkyard.js`:
 
-- `scoped-processes`: only `src/Proc.ts` may start processes; nothing may run or fork work outside a scope; only the reaper may signal processes.
-- `no-gen-wrapper`: a named function that only returns `Effect.gen` must be `Effect.fn` or `Effect.fnUntraced`.
-- `flat-orchestration`: Effect generator bodies stay at one level: no nested `Effect.gen`, no `try`, no `else`, single-statement `if` blocks, at most 10 steps.
-- `edges-only`: no logging or error recovery between the steps of a generator; use combinators at the function's edge.
-- `branded-ids`: `id`, `pid`, `port`, `runId` and `worktreeId` use the branded types in `src/Ids.ts`.
+- `scoped-processes` (error): only `src/Proc.ts` may start processes (`node:child_process`, `effect/process`, `NodeServices`), only the Registry's reaper may call `process.kill`, and `Effect.run*` is not called inside the daemon: effects are composed and run once at the entry point.
+- `no-gen-wrapper` (warning): a named function that only returns `Effect.gen` is usually better as `Effect.fn` (named and traced) or `Effect.fnUntraced`.
+
+## What reviewers check instead
+
+These need judgment, so they are not lint rules.
+
+- Resources live in scopes. Anything acquired and released (processes, containers, routes, database rows that track a process, exporters) is acquired with a release in a scope. Fibers that only do work in forkyard's own memory do not need one.
+- Branded types for values that are not really strings or numbers: ids, names that become hostnames, ports, pids, paths. Use the schemas in `src/Ids.ts` and their smart constructors; add one there before passing a bare `string` or `number` around.
+- Single level of abstraction. A function reads at one level: an orchestration step calls named steps and does not also build SQL, parse ports or format strings inline. This is about what a function mixes, not how long it is.
+- Service methods stay small enough to read in one screen. Split by responsibility, not to hit a number.

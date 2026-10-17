@@ -9,7 +9,11 @@ export type InfraLease = {
   readonly server: InfraServer
 }
 
-const instanceOf = (spec: InfraSpec, worktree: Worktree) => (spec.scope === "shared" ? "shared" : worktree.id)
+const instanceOf = (spec: InfraSpec, worktree: Worktree) => {
+  if (spec.scope === "worktree") return worktree.id
+  if (spec.sharedBy === "project") return worktree.project
+  return "shared"
+}
 
 const keyOf = (name: InfraName, instance: string) => `${name}|${instance}`
 
@@ -39,6 +43,7 @@ export class InfraManager extends Context.Service<
   {
     readonly acquire: (spec: InfraSpec, worktree: Worktree) => Effect.Effect<InfraLease, InfraError, Scope.Scope>
     readonly running: Effect.Effect<ReadonlyArray<string>>
+    readonly act: (spec: InfraSpec, server: InfraServer, worktree: Worktree, action: string) => Effect.Effect<string, InfraError>
   }
 >()("forkyard/InfraManager") {
   static readonly layer = (options: { readonly domain: string; readonly proxyPort: Port }) =>
@@ -48,6 +53,7 @@ export class InfraManager extends Context.Service<
         const proc = yield* Proc
         const router = yield* Router
         const specs = yield* Ref.make<Readonly<Record<string, InfraSpec>>>({})
+        const origins = yield* Ref.make<Readonly<Record<string, Worktree>>>({})
 
         const hostFor = (name: InfraName, route: string, instance: string) =>
           instance === "shared" ? `${route}.${options.domain}` : `${route}.${instance}.${options.domain}`
@@ -80,7 +86,13 @@ export class InfraManager extends Context.Service<
               "forkyard.infra.scope": spec.scope
             })
 
-            const started = yield* spec.start(instance, toolsFor(proc, instance))
+            const origin = (yield* Ref.get(origins))[key]
+            if (!origin) return yield* new InfraError({ infra: name, message: "no worktree asked for this infra" })
+
+            const leases = yield* Effect.forEach(spec.uses ?? [], (dependency) => acquire(dependency, origin), { concurrency: "unbounded" })
+            const usesEnv = leases.reduce<Env>((all, lease) => ({ ...all, ...lease.env }), {})
+
+            const started = yield* spec.start(instance, toolsFor(proc, instance), origin, usesEnv)
             yield* exposeRoutes(name, instance, started)
             const lock = yield* Semaphore.make(1)
 
@@ -94,8 +106,16 @@ export class InfraManager extends Context.Service<
         )
 
         const servers = yield* RcMap.make({ lookup: startInstance, idleTimeToLive: "1 second" })
+        const stopAllAtOnce = RcMap.keys(servers).pipe(
+          Effect.flatMap((keys) =>
+            Effect.forEach(keys, (key) => RcMap.invalidate(servers, key), { concurrency: "unbounded", discard: true })
+          )
+        )
+        yield* Effect.addFinalizer(() => stopAllAtOnce)
 
-        const acquire = Effect.fn("InfraManager.acquire")(function* (spec: InfraSpec, worktree: Worktree) {
+        const acquire: (spec: InfraSpec, worktree: Worktree) => Effect.Effect<InfraLease, InfraError, Scope.Scope> = Effect.fn(
+          "InfraManager.acquire"
+        )(function* (spec: InfraSpec, worktree: Worktree) {
           yield* Effect.annotateCurrentSpan({
             "forkyard.infra": spec.name,
             "forkyard.infra.scope": spec.scope,
@@ -103,14 +123,30 @@ export class InfraManager extends Context.Service<
           })
 
           const instance = instanceOf(spec, worktree)
+          const key = keyOf(spec.name, instance)
           yield* Ref.update(specs, (all) => ({ ...all, [spec.name]: spec }))
-          const server = yield* RcMap.get(servers, keyOf(spec.name, instance))
+          yield* Ref.update(origins, (all) => (all[key] ? all : { ...all, [key]: worktree }))
+          const server = yield* RcMap.get(servers, key)
           const env = yield* spec.tenant(server, worktree, toolsFor(proc, instance))
 
           return { env, server } satisfies InfraLease
         })
 
-        return InfraManager.of({ acquire, running: RcMap.keys(servers).pipe(Effect.map((keys) => [...keys])) })
+        const act = Effect.fn("InfraManager.act")(function* (spec: InfraSpec, server: InfraServer, worktree: Worktree, action: string) {
+          yield* Effect.annotateCurrentSpan({
+            "forkyard.infra": spec.name,
+            "forkyard.infra.action": action,
+            "forkyard.worktree": worktree.id
+          })
+          const run = spec.actions?.[action]
+          if (!run) {
+            const known = Object.keys(spec.actions ?? {}).join(", ") || "none"
+            return yield* new InfraError({ infra: spec.name, message: `no action "${action}" (available: ${known})` })
+          }
+          return yield* run(server, worktree, toolsFor(proc, server.instance)).pipe(Effect.scoped)
+        })
+
+        return InfraManager.of({ acquire, running: RcMap.keys(servers).pipe(Effect.map((keys) => [...keys])), act })
       })
     )
 }

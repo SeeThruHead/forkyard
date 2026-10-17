@@ -45,20 +45,28 @@ export const dotenv = (...files: ReadonlyArray<string>): EnvSource => ({
 })
 
 const VarlockOutput = Schema.Struct({
-  config: Schema.Record(Schema.String, Schema.Struct({ value: Schema.Unknown, isSensitive: Schema.Boolean }))
+  config: Schema.Record(Schema.String, Schema.Struct({ value: Schema.optional(Schema.Unknown), isSensitive: Schema.Boolean }))
 })
 
-export const varlock = (options: { readonly run?: Run; readonly path?: string } = {}): EnvSource => ({
-  label: "varlock",
+const varlockCommand = Effect.fnUntraced(function* (context: EnvLoadContext, root: string, run: Run | undefined) {
+  if (run) return run
+
+  const local = `${root}/node_modules/.bin/varlock`
+  const installed = yield* context.readFile(local)
+  return Option.isSome(installed) ? { command: local, args: [] } : { command: "pnpm", args: ["exec", "varlock"] }
+})
+
+export const varlock = (options: { readonly run?: Run; readonly path?: string; readonly schema?: string } = {}): EnvSource => ({
+  label: options.schema ? `varlock ${options.schema}` : "varlock",
   load: Effect.fn("EnvSource.varlock")(function* (context: EnvLoadContext) {
-    const run = options.run ?? { command: "pnpm", args: ["exec", "varlock"] }
-    const json = yield* context.exec(
-      { command: run.command, args: [...run.args, "load", "--format", "json-full"] },
-      options.path ? `${context.root}/${options.path}` : context.root
-    )
+    const root = options.path ? `${context.root}/${options.path}` : context.root
+    const run = yield* varlockCommand(context, root, options.run)
+    const entry = options.schema ? ["--path", `${context.root}/${options.schema}`] : []
+    const json = yield* context.exec({ command: run.command, args: [...run.args, "load", ...entry, "--format", "json-full"] }, root)
     const output = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(VarlockOutput))(json).pipe(
       Effect.mapError((error) => new EnvError({ source: "varlock", message: error.message }))
     )
+
     return Object.fromEntries(
       Object.entries(output.config)
         .filter(([, item]) => item.value !== undefined && item.value !== null)

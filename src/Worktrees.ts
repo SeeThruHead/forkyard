@@ -101,6 +101,7 @@ export class Worktrees extends Context.Service<
         const restore = registry.desiredUp.pipe(
           Effect.flatMap((rows) =>
             Effect.forEach(rows, (row) => up({ root: row.root, branch: row.branch, stackFile: row.stack_file }).pipe(Effect.ignore), {
+              concurrency: "unbounded",
               discard: true
             })
           )

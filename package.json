@@ -25,16 +25,17 @@
     "prepare": "lefthook install"
   },
   "dependencies": {
-    "@effect/atom-react": "4.0.0",
-    "@effect/platform-node": "4.0.0",
-    "@effect/sql-pg": "4.0.0",
-    "@effect/sql-sqlite-node": "4.0.0",
-    "effect": "4.0.0",
+    "@effect/atom-react": "4.0.5",
+    "@effect/platform-node": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
+    "@effect/sql-sqlite-node": "4.0.5",
+    "effect": "4.0.5",
+    "ink": "8.0.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@effect/vitest": "4.0.0",
+    "@effect/vitest": "4.0.5",
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -44,10 +45,5 @@
     "rust-just": "1.59.0",
     "typescript": "^5.9.0",
     "vitest": "^5.0.5"
-  },
-  "pnpm": {
-    "overrides": {
-      "@effect/platform-node-shared": "4.0.0"
-    }
   }
 }
