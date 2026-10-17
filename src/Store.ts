@@ -42,6 +42,20 @@ const migrations = Migrator.fromRecord({
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE processes ADD COLUMN daemon_id TEXT NOT NULL DEFAULT ''`
     yield* sql`ALTER TABLE processes ADD COLUMN boot_minute INTEGER NOT NULL DEFAULT 0`
+  }),
+  "6_worktrees_by_folder": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE worktrees_by_folder (
+      root TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      desired TEXT NOT NULL,
+      branch TEXT NOT NULL DEFAULT '',
+      stack_file TEXT NOT NULL DEFAULT ''
+    )`
+    yield* sql`INSERT OR IGNORE INTO worktrees_by_folder (root, slug, desired, branch, stack_file)
+      SELECT root, slug, desired, branch, stack_file FROM worktrees ORDER BY rowid`
+    yield* sql`DROP TABLE worktrees`
+    yield* sql`ALTER TABLE worktrees_by_folder RENAME TO worktrees`
   })
 })
 

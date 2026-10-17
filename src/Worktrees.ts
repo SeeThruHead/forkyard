@@ -42,21 +42,25 @@ export class Worktrees extends Context.Service<
 
         const recordRunning = FiberMap.size(running).pipe(Effect.flatMap((count) => Metric.update(Metrics.worktreesRunning, count)))
 
-        const worktreeFor = (stack: Stack, request: UpRequest): Effect.Effect<Worktree, ForkyardError> =>
+        const baseName = (request: UpRequest) =>
           Option.match(branchSlug(request.branch), {
-            onNone: () => Effect.fail(new ForkyardError({ message: `"${request.branch}" cannot be used as a branch name` })),
-            onSome: (branch) => {
-              const id = worktreeId(branch, stack.name)
-              return Effect.succeed({
-                id,
-                project: stack.name,
-                branch,
-                root: request.root,
-                domain: `${id}.${options.domain}`,
-                proxyPort: options.proxyPort
-              })
-            }
+            onNone: () => Effect.fail(new ForkyardError({ message: `"${request.branch}" cannot be used as a name` })),
+            onSome: Effect.succeed
           })
+
+        const worktreeFor = Effect.fn("Worktrees.worktreeFor")(function* (stack: Stack, request: UpRequest) {
+          const name = yield* registry.nameFor(request.root, stack.name, yield* baseName(request))
+          const id = worktreeId(name, stack.name)
+          yield* Effect.annotateCurrentSpan({ "forkyard.worktree": id })
+          return {
+            id,
+            project: stack.name,
+            branch: name,
+            root: request.root,
+            domain: `${id}.${options.domain}`,
+            proxyPort: options.proxyPort
+          } satisfies Worktree
+        })
 
         const desired = (worktree: Worktree, request: UpRequest): DesiredWorktree => ({
           slug: worktree.id,
@@ -75,11 +79,20 @@ export class Worktrees extends Context.Service<
             )
           )
 
+        const refuseNameTakenElsewhere = Effect.fn("Worktrees.refuseNameTakenElsewhere")(function* (worktree: Worktree) {
+          const running = (yield* status.snapshot)[worktree.id]
+          if (!running || running.root === worktree.root) return
+          return yield* new ForkyardError({
+            message: `${worktree.id} is already running from ${running.root}. Give this checkout its own name with --branch.`
+          })
+        })
+
         const up = Effect.fn("Worktrees.up")(function* (request: UpRequest) {
           yield* Effect.annotateCurrentSpan({ "forkyard.root": request.root, "forkyard.branch": request.branch })
 
           const stack = yield* loadStack(request.stackFile)
           const worktree = yield* worktreeFor(stack, request)
+          yield* refuseNameTakenElsewhere(worktree)
           yield* registry.markUp(desired(worktree, request))
           if (yield* FiberMap.has(running, worktree.id)) return worktree.id
 

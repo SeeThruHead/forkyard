@@ -1,7 +1,7 @@
-import { Clock, Context, Crypto, Effect, Layer, Schema, type Scope } from "effect"
+import { Clock, Context, Crypto, Effect, FileSystem, Layer, Schema, type Scope } from "effect"
 import { SqlClient } from "effect/sql"
 import { uptime } from "node:os"
-import { AbsolutePath, Pid, ProcessOwner, type WorktreeId } from "./Ids.ts"
+import { AbsolutePath, BranchSlug, Pid, ProcessOwner, type ProjectName, type WorktreeId, worktreeId } from "./Ids.ts"
 
 export const ProcessRow = Schema.Struct({
   pid: Pid,
@@ -19,6 +19,16 @@ export const DesiredWorktree = Schema.Struct({
   stack_file: AbsolutePath
 })
 export type DesiredWorktree = typeof DesiredWorktree.Type
+
+const NamedFolder = Schema.Struct({ slug: Schema.String, root: Schema.String })
+
+const isNameFrom = (name: string, base: string) => name === base || new RegExp(`^${base}-\\d+$`).test(name)
+
+export const firstFreeName = (base: BranchSlug, project: ProjectName, taken: ReadonlySet<string>, attempt = 1): BranchSlug => {
+  const name = BranchSlug.make(attempt === 1 ? base : `${base}-${attempt}`)
+  if (!taken.has(worktreeId(name, project))) return name
+  return firstFreeName(base, project, taken, attempt + 1)
+}
 
 type Identity = { readonly daemonId: string; readonly bootMinute: number }
 
@@ -41,6 +51,7 @@ export class Registry extends Context.Service<
       readonly service: string
     }) => Effect.Effect<void, never, Scope.Scope>
     readonly reaped: ReadonlyArray<ProcessRow>
+    readonly nameFor: (root: AbsolutePath, project: ProjectName, base: BranchSlug) => Effect.Effect<BranchSlug>
     readonly markUp: (worktree: DesiredWorktree) => Effect.Effect<void>
     readonly markDown: (id: WorktreeId) => Effect.Effect<void>
     readonly desiredUp: Effect.Effect<ReadonlyArray<DesiredWorktree>>
@@ -50,6 +61,7 @@ export class Registry extends Context.Service<
     Registry,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
+      const fs = yield* FileSystem.FileSystem
       const crypto = yield* Crypto.Crypto
       const identity: Identity = { daemonId: yield* crypto.randomUUIDv4().pipe(Effect.orDie), bootMinute: yield* bootMinute }
 
@@ -87,8 +99,32 @@ export class Registry extends Context.Service<
         return Effect.acquireRelease(insert, () => remove).pipe(Effect.asVoid)
       }
 
+      const folders = sql`SELECT slug, root FROM worktrees`.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(NamedFolder))),
+        Effect.orDie
+      )
+
+      const stillExists = (root: string) => fs.exists(root).pipe(Effect.orElseSucceed(() => false))
+
+      const nameFor = Effect.fn("Registry.nameFor")(function* (root: AbsolutePath, project: ProjectName, base: BranchSlug) {
+        const rows = yield* folders
+        const mine = rows.find((row) => row.root === root)?.slug
+        const others = yield* Effect.filter(
+          rows.filter((row) => row.root !== root),
+          (row) => stillExists(row.root)
+        )
+        const taken = new Set(others.map((row) => row.slug))
+        const kept = mine?.slice(0, -(project.length + 1))
+        if (mine && kept && isNameFrom(kept, base) && !taken.has(mine)) return BranchSlug.make(kept)
+        return firstFreeName(base, project, taken)
+      })
+
       const markUp = (worktree: DesiredWorktree) =>
-        sql`INSERT OR REPLACE INTO worktrees ${sql.insert({ ...worktree, desired: "up" })}`.pipe(Effect.asVoid, Effect.orDie)
+        sql`DELETE FROM worktrees WHERE slug = ${worktree.slug} AND root <> ${worktree.root}`.pipe(
+          Effect.andThen(sql`INSERT OR REPLACE INTO worktrees ${sql.insert({ ...worktree, desired: "up" })}`),
+          Effect.asVoid,
+          Effect.orDie
+        )
 
       const markDown = (id: WorktreeId) => sql`UPDATE worktrees SET desired = 'down' WHERE slug = ${id}`.pipe(Effect.asVoid, Effect.orDie)
 
@@ -99,7 +135,7 @@ export class Registry extends Context.Service<
 
       const reaped = yield* reapOrphans()
 
-      return Registry.of({ track, reaped, markUp, markDown, desiredUp })
+      return Registry.of({ track, reaped, nameFor, markUp, markDown, desiredUp })
     })
   )
 }
