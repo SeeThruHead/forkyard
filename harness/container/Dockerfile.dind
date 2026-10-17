@@ -1,0 +1,8 @@
+FROM forkyard-container-test
+ARG DOCKER=27.5.1
+RUN apt-get update && apt-get install -y --no-install-recommends iptables && rm -rf /var/lib/apt/lists/* \
+  && curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER}.tgz" | tar -xz -C /tmp && mv /tmp/docker/* /usr/local/bin/ && rm -rf /tmp/docker
+COPY app-postgres /app-postgres
+WORKDIR /app-postgres
+RUN npm install --no-audit --no-fund
+ENV FORKYARD_PROXY=docker FORKYARD_TELEMETRY=false

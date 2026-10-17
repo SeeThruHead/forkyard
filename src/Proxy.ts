@@ -12,6 +12,9 @@ const traefikArgs = (port: number, dynamicDir: string) => [
   "--providers.file.watch=true"
 ]
 
+const dockerNetworking = (port: number): ReadonlyArray<string> =>
+  process.platform === "linux" ? ["--network", "host"] : ["-p", `${port}:80`]
+
 export const layer = (options: {
   readonly mode: "docker" | "binary"
   readonly traefikDir: string
@@ -33,12 +36,11 @@ export const layer = (options: {
         infra: "traefik",
         name: forkyardName("traefik", options.port),
         args: [
-          "-p",
-          `${options.port}:80`,
+          ...dockerNetworking(options.port),
           "-v",
           `${path.resolve(options.traefikDir)}:/etc/traefik/dynamic`,
           "traefik:v3",
-          ...traefikArgs(80, "/etc/traefik/dynamic")
+          ...traefikArgs(process.platform === "linux" ? options.port : 80, "/etc/traefik/dynamic")
         ]
       }).pipe(Effect.orDie)
     }).pipe(Effect.withSpan("Proxy.start", { attributes: { "server.port": options.port } }))

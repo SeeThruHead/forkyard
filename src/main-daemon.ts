@@ -64,6 +64,12 @@ const chooseHostsFile = Effect.fn("chooseHostsFile")(function* (configured: Opti
   return undefined
 })
 
+const defaultUpstream = (mode: "docker" | "binary") => {
+  if (mode === "binary") return "127.0.0.1"
+  if (process.platform === "linux") return "127.0.0.1"
+  return "host.docker.internal"
+}
+
 const telemetryTarget = (config: Settings): TelemetryTarget => {
   if (!config.telemetry) return { _tag: "Off" }
   if (Option.isSome(config.otlpUrl)) return { _tag: "Remote", url: config.otlpUrl.value, headers: parseHeaders(config.otlpHeaders) }
@@ -75,7 +81,7 @@ const optionsFor = (home: string, path: Path.Path, config: Settings, hostsFile: 
   socket: path.join(home, "forkyard.sock"),
   stateFile: path.join(home, "forkyard.sqlite"),
   traefikDir: path.join(home, "traefik"),
-  upstreamHost: Option.getOrElse(config.upstreamHost, () => (config.proxyMode === "binary" ? "127.0.0.1" : "host.docker.internal")),
+  upstreamHost: Option.getOrElse(config.upstreamHost, () => defaultUpstream(config.proxyMode)),
   proxyMode: config.proxyMode,
   telemetry: telemetryTarget(config),
   proxyPort: Port.make(config.proxyPort),
