@@ -7,6 +7,13 @@ import { daemonLogAtom, restartAtom, stopAtom } from "./forkyard.ts"
 import { counts, formatCpu, formatMem, healthOf, keyColor, mainUrl, sumUsage, usageOfWorktree, worktreeOrder } from "./format.ts"
 import { go } from "./ui.tsx"
 
+const collapsedKey = "forkyard.collapsed"
+
+const readCollapsed = (): ReadonlyArray<string> => JSON.parse(localStorage.getItem(collapsedKey) ?? "[]")
+
+const toggled = (list: ReadonlyArray<string>, item: string) =>
+  list.includes(item) ? list.filter((other) => other !== item) : [...list, item]
+
 const sharedInfra = (worktrees: ReadonlyArray<WorktreeView>) => {
   const all = worktrees.flatMap((worktree) =>
     Object.entries(worktree.infra)
@@ -19,50 +26,62 @@ const sharedInfra = (worktrees: ReadonlyArray<WorktreeView>) => {
   })
 }
 
-const ProcessRows = ({ worktree, usage }: { readonly worktree: WorktreeView; readonly usage: UsageMap }) => {
+const repoTone = (failed: number, settled: number, total: number) => {
+  if (failed > 0) return "c-Failed"
+  if (settled < total) return "c-Starting"
+  return "c-Ready"
+}
+
+const levelTone = (level: string) => {
+  if (level === "Warn") return "c-Starting"
+  if (level === "Error") return "c-Failed"
+  return "faint"
+}
+
+const Processes = ({ worktree, usage }: { readonly worktree: WorktreeView; readonly usage: UsageMap }) => {
   const restart = useAtomSet(restartAtom)
   return (
-    <>
+    <div className="procs">
       {Object.entries(worktree.services).map(([name, view]) => {
         const run = runOf(view.state)
         const use = run ? usage[String(run.pid)] : undefined
         const url = serviceUrl(view)
         return (
-          <tr key={name} className="process-row">
-            <td />
-            <td>
-              <span className={`c-${view.state._tag}`}>● </span>
-              {name}
-            </td>
-            <td className={`c-${view.state._tag}`}>
-              {view.state._tag.toLowerCase()}
-              {"reason" in view.state ? <span className="c-Failed"> · {view.state.reason}</span> : null}
-            </td>
-            <td className="num dim">{run ? `#${run.run}` : ""}</td>
-            <td className="num">{formatCpu(use)}</td>
-            <td className="num">{formatMem(use)}</td>
-            <td>
+          <div className="proc" key={name}>
+            <span className={`c-${view.state._tag}`}>●</span>
+            <span>{name}</span>
+            <span className={`c-${view.state._tag}`}>{view.state._tag.toLowerCase()}</span>
+            <span className="stat dim">{run ? `#${run.run}` : ""}</span>
+            <span className="stat">{formatCpu(use)}</span>
+            <span className="stat">{formatMem(use)}</span>
+            <span className="proc-note">
               {url ? (
                 <a href={url} target="_blank" rel="noreferrer">
                   {url.replace("http://", "")}
                 </a>
-              ) : null}
-            </td>
-            <td style={{ textAlign: "right" }}>
-              {view._tag === "Task" ? null : (
-                <button className="button" onClick={() => restart({ id: worktree.id, service: ServiceName.make(name) })}>
-                  ↻
-                </button>
+              ) : (
+                <span className="c-Failed">{"reason" in view.state ? view.state.reason : ""}</span>
               )}
-            </td>
-          </tr>
+            </span>
+            {view._tag === "Task" ? (
+              <span />
+            ) : (
+              <button
+                className="button small"
+                title={`Restart ${name}`}
+                onClick={() => restart({ id: worktree.id, service: ServiceName.make(name) })}
+              >
+                ↻
+              </button>
+            )}
+          </div>
         )
       })}
-    </>
+    </div>
   )
 }
 
-const WorktreeRow = ({
+const Branch = ({
   worktree,
   usage,
   expanded,
@@ -81,8 +100,8 @@ const WorktreeRow = ({
   const url = mainUrl(worktree)
 
   return (
-    <tr className="clickable" onClick={() => go(`wt/${worktree.id}`)}>
-      <td>
+    <>
+      <div className="branch-row" onClick={() => go(`wt/${worktree.id}`)}>
         <button
           className="expander"
           title={expanded ? "Hide processes" : "Show processes"}
@@ -93,24 +112,21 @@ const WorktreeRow = ({
         >
           {expanded ? "▾" : "▸"}
         </button>
-      </td>
-      <td className="strong">{worktree.branch}</td>
-      <td className={`health c-${health.state}`}>{health.label}</td>
-      <td className={`num ${infraReady === infra.length ? "dim" : "c-Starting"}`}>
-        {infraReady}/{infra.length}
-      </td>
-      <td className="num">{formatCpu(total)}</td>
-      <td className="num">{formatMem(total)}</td>
-      <td>
+        <span className="branch-label">{worktree.branch}</span>
+        <span className={`stat c-${health.state}`}>{health.label}</span>
+        <span className={`stat ${infraReady === infra.length ? "dim" : "c-Starting"}`}>
+          infra {infraReady}/{infra.length}
+        </span>
+        <span className="stat">{formatCpu(total)}</span>
+        <span className="stat">{formatMem(total)}</span>
         {url ? (
           <a href={url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
             {url.replace("http://", "")}
           </a>
         ) : null}
-      </td>
-      <td style={{ textAlign: "right" }}>
+        <span className="grow" />
         <button
-          className="button danger"
+          className="button danger small"
           onClick={(event) => {
             event.stopPropagation()
             stop(worktree.id)
@@ -118,68 +134,64 @@ const WorktreeRow = ({
         >
           ■ Stop
         </button>
-      </td>
-    </tr>
+      </div>
+      {expanded ? <Processes worktree={worktree} usage={usage} /> : null}
+    </>
   )
 }
 
-const levelTone = (level: string) => {
-  if (level === "Warn") return "c-Starting"
-  if (level === "Error") return "c-Failed"
-  return "faint"
-}
-
-const collapsedKey = "forkyard.collapsed"
-
-const readCollapsed = (): ReadonlyArray<string> => JSON.parse(localStorage.getItem(collapsedKey) ?? "[]")
-
-const repoTone = (failed: number, settled: number, total: number) => {
-  if (failed > 0) return "c-Failed"
-  if (settled < total) return "c-Starting"
-  return "c-Ready"
-}
-
-const RepoRow = ({
+const Repo = ({
   project,
   worktrees,
   usage,
   open,
-  onToggle
+  onToggle,
+  expanded,
+  onExpand
 }: {
   readonly project: string
   readonly worktrees: ReadonlyArray<WorktreeView>
   readonly usage: UsageMap
   readonly open: boolean
   readonly onToggle: () => void
+  readonly expanded: ReadonlyArray<string>
+  readonly onExpand: (id: string) => void
 }) => {
   const all = worktrees.map(counts)
   const total = all.reduce((sum, item) => sum + item.total, 0)
   const settled = all.reduce((sum, item) => sum + item.settled, 0)
   const failed = all.reduce((sum, item) => sum + item.failed, 0)
   const resources = sumUsage(worktrees.map((worktree) => usageOfWorktree(usage, worktree)))
-  const tone = repoTone(failed, settled, total)
 
   return (
-    <tr className="clickable repo-row" onClick={onToggle}>
-      <td colSpan={2}>
+    <div className="repo">
+      <div className="repo-head" onClick={onToggle}>
         <span className="caret">{open ? "▾" : "▸"}</span>
         <span className="repo-name" style={{ color: keyColor(project) }}>
           {project}
         </span>
         <span className="dim">
-          {" "}
           {worktrees.length} {worktrees.length === 1 ? "branch" : "branches"}
         </span>
-      </td>
-      <td className={`health ${tone}`}>
-        {settled}/{total}
-        {failed > 0 ? ` · ${failed} failed` : ""}
-      </td>
-      <td />
-      <td className="num">{formatCpu(resources)}</td>
-      <td className="num">{formatMem(resources)}</td>
-      <td colSpan={2} />
-    </tr>
+        <span className={`stat ${repoTone(failed, settled, total)}`}>
+          {settled}/{total}
+          {failed > 0 ? ` · ${failed} failed` : ""}
+        </span>
+        <span className="stat">{formatCpu(resources)}</span>
+        <span className="stat">{formatMem(resources)}</span>
+      </div>
+      {open
+        ? worktrees.map((worktree) => (
+            <Branch
+              key={worktree.id}
+              worktree={worktree}
+              usage={usage}
+              expanded={expanded.includes(worktree.id)}
+              onExpand={() => onExpand(worktree.id)}
+            />
+          ))
+        : null}
+    </div>
   )
 }
 
@@ -200,13 +212,13 @@ const DaemonLog = () => {
 
 export const Home = ({ snapshot, usage }: { readonly snapshot: Snapshot; readonly usage: UsageMap }) => {
   const worktrees = Object.values(snapshot).sort(worktreeOrder)
+  const projects = [...new Set(worktrees.map((worktree) => worktree.project))]
   const shared = sharedInfra(worktrees)
   const [collapsed, setCollapsed] = useState<ReadonlyArray<string>>(readCollapsed)
   const [expanded, setExpanded] = useState<ReadonlyArray<string>>([])
-  const expand = (id: string) => setExpanded((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
-  const projects = [...new Set(worktrees.map((worktree) => worktree.project))]
+
   const toggle = (project: string) => {
-    const next = collapsed.includes(project) ? collapsed.filter((item) => item !== project) : [...collapsed, project]
+    const next = toggled(collapsed, project)
     localStorage.setItem(collapsedKey, JSON.stringify(next))
     setCollapsed(next)
   }
@@ -216,51 +228,19 @@ export const Home = ({ snapshot, usage }: { readonly snapshot: Snapshot; readonl
       <div className="home">
         <div className="panel home-table">
           <h2>Worktrees</h2>
-          <div className="scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th style={{ width: 160 }}>Repo</th>
-                  <th>Branch</th>
-                  <th>Services</th>
-                  <th>Infra</th>
-                  <th>CPU</th>
-                  <th>Memory</th>
-                  <th>Open at</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {projects.map((project) => {
-                  const members = worktrees.filter((worktree) => worktree.project === project)
-                  const open = !collapsed.includes(project)
-                  return [
-                    <RepoRow
-                      key={project}
-                      project={project}
-                      worktrees={members}
-                      usage={usage}
-                      open={open}
-                      onToggle={() => toggle(project)}
-                    />,
-                    ...(open
-                      ? members.flatMap((worktree) => [
-                          <WorktreeRow
-                            key={worktree.id}
-                            worktree={worktree}
-                            usage={usage}
-                            expanded={expanded.includes(worktree.id)}
-                            onExpand={() => expand(worktree.id)}
-                          />,
-                          ...(expanded.includes(worktree.id)
-                            ? [<ProcessRows key={`${worktree.id}-processes`} worktree={worktree} usage={usage} />]
-                            : [])
-                        ])
-                      : [])
-                  ]
-                })}
-              </tbody>
-            </table>
+          <div className="scroll tree">
+            {projects.map((project) => (
+              <Repo
+                key={project}
+                project={project}
+                worktrees={worktrees.filter((worktree) => worktree.project === project)}
+                usage={usage}
+                open={!collapsed.includes(project)}
+                onToggle={() => toggle(project)}
+                expanded={expanded}
+                onExpand={(id) => setExpanded((current) => toggled(current, id))}
+              />
+            ))}
             {worktrees.length === 0 ? <p className="empty">Nothing running. Run forkyard up in a checkout.</p> : null}
           </div>
         </div>

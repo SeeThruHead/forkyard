@@ -245,38 +245,86 @@
       .home-table {
         min-height: 0;
       }
-      .repo-row td {
-        background: var(--raised);
-        border-bottom-color: var(--border);
+      .tree .repo + .repo {
+        border-top: 1px solid var(--border);
       }
-      .repo-row .caret {
-        display: inline-block;
-        width: 16px;
+      .repo-head,
+      .branch-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 7px 12px;
+        cursor: pointer;
+        white-space: nowrap;
+        min-width: 0;
+      }
+      .repo-head {
+        background: var(--raised);
+        gap: 12px;
+      }
+      .repo-head:hover,
+      .branch-row:hover {
+        background: #283041;
+      }
+      .repo-head .caret {
+        width: 12px;
         color: var(--muted);
       }
-      .repo-row .repo-name {
+      .repo-head .repo-name {
         font-weight: 700;
+      }
+      .branch-row {
+        padding-left: 20px;
+        border-top: 1px solid #262a33;
+      }
+      .branch-row a {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
+      .branch-label {
+        font-weight: 600;
+        min-width: 140px;
+      }
+      .stat {
+        font: var(--mono);
+      }
+      .grow {
+        flex: 1;
+      }
+      .button.small {
+        padding: 2px 8px;
+        font-size: 12px;
       }
       .expander {
         border: 0;
         background: none;
         color: var(--muted);
         cursor: pointer;
-        padding: 0 6px;
-        margin-left: 12px;
+        padding: 0 2px;
+        width: 14px;
         font-size: 13px;
       }
       .expander:hover {
         color: var(--text);
       }
-      .process-row td {
+      .procs {
+        display: grid;
+        grid-template-columns: 12px minmax(130px, max-content) 76px 40px 40px 52px minmax(0, 1fr) auto;
+        column-gap: 12px;
+        row-gap: 2px;
+        align-items: center;
+        padding: 6px 12px 10px 42px;
         background: #191c22;
-        padding-top: 4px;
-        padding-bottom: 4px;
         font-size: 12.5px;
       }
-      .process-row td:nth-child(2) {
-        padding-left: 28px;
+      .proc {
+        display: contents;
+      }
+      .proc-note {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .infra-row {
         display: flex;
