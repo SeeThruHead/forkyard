@@ -75,7 +75,7 @@ const dashboardServer = (options: DaemonOptions) =>
     Layer.mergeAll(
       RpcServer.layer(ForkyardRpcs).pipe(Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" }))),
       otlpProxy,
-      HttpStaticServer.layer({ root: options.dashboardDir, spa: true })
+      HttpStaticServer.layer({ root: options.dashboardDir, spa: true, cacheControl: "no-store" })
     ),
     { disableLogger: true }
   ).pipe(
