@@ -24,7 +24,7 @@ pick_runtime() {
 }
 
 case "$(pick_runtime)" in
-  bun) exec bun "$entry" "$@" ;;
+  bun) exec bun --no-env-file --no-install --config=/dev/null "$entry" "$@" ;;
   node) exec node --no-warnings "$entry" "$@" ;;
   *) echo "forkyard needs Node 24 or newer, or Bun. FORKYARD_RUNTIME, if set, must be node or bun." >&2; exit 1 ;;
 esac
