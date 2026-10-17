@@ -27,11 +27,9 @@ export class Upgrade extends Context.Service<
         const notice = Effect.fn("Upgrade.notice")(function* (installed: string) {
           if ((yield* Ref.get(pending)) === installed) return
           yield* Ref.set(pending, installed)
-          if (!options.supervised) {
-            yield* Effect.logWarning(`forkyard ${installed} is installed; this daemon is still ${packageVersion}. Restart it to upgrade.`)
-            return
-          }
-          yield* Effect.logWarning(`forkyard ${installed} is installed; restarting from ${packageVersion} to switch to it`)
+          yield* Effect.logWarning(
+            `forkyard ${installed} is installed; restarting from ${packageVersion} to switch to it${options.supervised ? "" : " in place"}`
+          )
           yield* Deferred.succeed(restart, undefined)
         })
 

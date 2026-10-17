@@ -49,6 +49,9 @@ const optionsFor = (home: string, path: Path.Path, config: Settings): Daemon.Dae
   startupConcurrency: config.startupConcurrency
 })
 
+const restartInPlace = () =>
+  process.execve?.(process.execPath, [process.execPath, ...process.execArgv, ...process.argv.slice(1)], process.env)
+
 export const runDaemon = Effect.fn("runDaemon")(function* (home: string) {
   yield* Effect.sync(supplyConfigImports)
   const path = yield* Path.Path
@@ -60,11 +63,12 @@ export const runDaemon = Effect.fn("runDaemon")(function* (home: string) {
   const upgrade = Upgrade.layer({ supervised: config.supervised })
   const daemon = Daemon.layer(optionsFor(home, path, config)).pipe(Layer.provideMerge(upgrade))
 
-  return yield* Effect.scoped(
+  yield* Effect.scoped(
     Layer.build(daemon).pipe(
       Effect.flatMap((services) => Upgrade.use((upgrade) => upgrade.restartRequested).pipe(Effect.provide(services)))
     )
   )
+  if (!config.supervised) yield* Effect.sync(restartInPlace)
 }, Effect.provide(Platform.layer))
 
 if (import.meta.main) runDaemon(process.argv[2] ?? defaultHome).pipe(NodeRuntime.runMain)
