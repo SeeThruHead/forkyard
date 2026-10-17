@@ -91,6 +91,9 @@ export const EnvVar = Schema.Struct({
 })
 export type EnvVar = typeof EnvVar.Type
 
+export const UsageMap = Schema.Record(Schema.String, Schema.Struct({ cpu: Schema.Number, rssKb: Schema.Number }))
+export type UsageMap = typeof UsageMap.Type
+
 export const DaemonLine = Schema.Struct({ at: Schema.Number, level: Schema.String, message: Schema.String })
 export type DaemonLine = typeof DaemonLine.Type
 

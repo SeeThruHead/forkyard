@@ -4,8 +4,8 @@ import { createElement as h, useEffect, useReducer, useState } from "react"
 import { spawn } from "node:child_process"
 import { ForkyardClient } from "../src/Client.ts"
 import { ServiceName, type WorktreeId } from "../src/Ids.ts"
-import type { EnvVar, Snapshot } from "../src/Model.ts"
-import { daemonFeed, emptyLogs, type Line, logsReducer, statusFeed, worktreeLogFeed } from "./Feeds.ts"
+import type { EnvVar, Snapshot, UsageMap } from "../src/Model.ts"
+import { daemonFeed, emptyLogs, type Line, logsReducer, statusFeed, usageFeed, worktreeLogFeed } from "./Feeds.ts"
 import { Home } from "./Home.ts"
 import { useMouseMode } from "./Mouse.ts"
 import { Worktree } from "./Worktree.ts"
@@ -38,6 +38,7 @@ const App = ({ context, initial }: AppProps) => {
   const [view, setView] = useState<View>(initial)
   const [snapshot, setSnapshot] = useState<Snapshot>({})
   const [daemon, setDaemon] = useState<ReadonlyArray<Line>>([])
+  const [usage, setUsage] = useState<UsageMap>({})
   const [logs, dispatch] = useReducer(logsReducer, emptyLogs)
 
   const run = <A, E>(effect: Effect.Effect<A, E, ForkyardClient>) => Effect.runForkWith(context)(effect)
@@ -47,9 +48,11 @@ const App = ({ context, initial }: AppProps) => {
 
   useEffect(() => {
     const status = run(statusFeed(setSnapshot))
+    const usageLines = run(usageFeed(setUsage))
     const daemonLines = run(daemonFeed((_key, lines) => setDaemon((current) => [...current, ...lines].slice(-keepDaemon))))
     return () => {
       run(Fiber.interrupt(status))
+      run(Fiber.interrupt(usageLines))
       run(Fiber.interrupt(daemonLines))
     }
   }, [])
@@ -65,8 +68,10 @@ const App = ({ context, initial }: AppProps) => {
     }
   }, [worktreeId])
 
+  const project = worktreeId ? snapshot[worktreeId]?.project : undefined
   const ids = Object.values(snapshot)
-    .map((worktree) => worktree.id)
+    .filter((other) => other.project === project)
+    .map((other) => other.id)
     .sort()
   const switchBy = (step: number) => {
     if (!worktreeId) return
@@ -87,10 +92,11 @@ const App = ({ context, initial }: AppProps) => {
     return h(Worktree, {
       key: worktreeId,
       worktree,
+      usage,
       logs,
       daemon,
       rows,
-      position: `${ids.indexOf(worktreeId) + 1} of ${ids.length}`,
+      position: `${worktree.project} branch ${ids.indexOf(worktreeId) + 1} of ${ids.length}`,
       onBack: () => setView({ _tag: "Home" }),
       onSwitch: switchBy,
       onRestart: restart(worktreeId),
@@ -101,6 +107,7 @@ const App = ({ context, initial }: AppProps) => {
 
   return h(Home, {
     snapshot,
+    usage,
     daemon,
     rows,
     onOpen: (id: WorktreeId) => setView({ _tag: "Worktree", id }),

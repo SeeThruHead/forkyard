@@ -84,6 +84,7 @@ export class Proc extends Context.Service<
   {
     readonly spawn: (options: SpawnOptions) => Effect.Effect<Spawned, SpawnError, Scope.Scope>
     readonly exec: (options: SpawnOptions) => Effect.Effect<string, SpawnError, Scope.Scope>
+    readonly processTable: Effect.Effect<string>
   }
 >()("forkyard/Proc") {
   static readonly layer = (options: { readonly otlpUrl: string }) =>
@@ -246,6 +247,12 @@ export class Proc extends Context.Service<
         const failedExec = (spawn: SpawnOptions, code: number, output: string) =>
           new SpawnError({ service: spawn.service, message: `${commandLine(spawn.run)} exited ${code}: ${lastLines(output)}` })
 
+        const processTable = spawner.string(ChildProcess.make("ps", ["-A", "-o", "pid=,ppid=,%cpu=,rss="])).pipe(
+          Effect.orElseSucceed(() => ""),
+          Effect.withSpan("Proc.processTable"),
+          Effect.withTracerEnabled(false)
+        )
+
         const exec = Effect.fn("Proc.exec")(function* (spawn: SpawnOptions) {
           yield* Effect.annotateCurrentSpan(processAttributes(spawn))
 
@@ -261,7 +268,7 @@ export class Proc extends Context.Service<
           return stdout
         })
 
-        return Proc.of({ spawn, exec })
+        return Proc.of({ spawn, exec, processTable })
       })
     ).pipe(
       Layer.provide(NodeChildProcessSpawner.layer),

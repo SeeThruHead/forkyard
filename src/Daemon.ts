@@ -14,6 +14,7 @@ import { RpcSerialization, RpcServer } from "effect/rpc"
 import { createServer } from "node:http"
 import * as Api from "./Api.ts"
 import { DaemonLog } from "./DaemonLog.ts"
+import { ProcessUsage } from "./Usage.ts"
 import { EnvResolver } from "./Env.ts"
 import type { Port } from "./Ids.ts"
 import { InfraManager } from "./InfraManager.ts"
@@ -135,6 +136,7 @@ export const layer = (options: DaemonOptions) => {
 
   return servers.pipe(
     Layer.provide(Api.layer),
+    Layer.provide(ProcessUsage.layer),
     Layer.provideMerge(worktrees),
     Layer.provide(telemetry),
     Layer.provideMerge(processes),

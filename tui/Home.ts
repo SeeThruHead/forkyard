@@ -1,14 +1,15 @@
 import { Box, Text, useInput } from "ink"
 import { createElement as h, useState } from "react"
 import type { WorktreeId } from "../src/Ids.ts"
-import { runOf, serviceUrl, type Snapshot, type WorktreeView } from "../src/Model.ts"
+import { runOf, serviceUrl, type Snapshot, type UsageMap, type WorktreeView } from "../src/Model.ts"
 import type { Line } from "./Feeds.ts"
 import { ButtonBar, clickedButton, isClick, isMouseInput, isWheel, isWheelDown, type Mouse, place, useMouse } from "./Mouse.ts"
-import { formatCpu, formatMem, sumUsage, type Usage, useUsage } from "./Stats.ts"
+import { formatCpu, formatMem, sumUsage, type Usage, usageFor } from "./Stats.ts"
 import { stateColor, theme } from "./Theme.ts"
 
 type Props = {
   readonly snapshot: Snapshot
+  readonly usage: UsageMap
   readonly daemon: ReadonlyArray<Line>
   readonly rows: number
   readonly onOpen: (id: WorktreeId) => void
@@ -106,11 +107,10 @@ const sharedInfra = (worktrees: ReadonlyArray<WorktreeView>) => {
   })
 }
 
-export const Home = ({ snapshot, daemon, rows, onOpen, onStop, onDashboard, onQuit }: Props) => {
+export const Home = ({ snapshot, usage, daemon, rows, onOpen, onStop, onDashboard, onQuit }: Props) => {
   const [selected, setSelected] = useState(0)
   const worktrees = Object.values(snapshot).sort(branchOrder)
-  const usage = useUsage(worktrees.flatMap(pidsOf))
-  const usageOf = (worktree: WorktreeView) => sumUsage(pidsOf(worktree).map((pid) => usage[pid]))
+  const usageOf = (worktree: WorktreeView) => sumUsage(pidsOf(worktree).map((pid) => usageFor(usage, pid)))
   const total = sumUsage(worktrees.map(usageOf))
   const processes = worktrees.reduce((sum, worktree) => sum + Object.keys(worktree.services).length, 0)
   const current = worktrees[Math.min(selected, worktrees.length - 1)]

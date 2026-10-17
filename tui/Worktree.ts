@@ -1,10 +1,10 @@
 import { Box, Text, useInput } from "ink"
 import { createElement as h, type ReactNode, useMemo, useState } from "react"
-import type { EnvVar, InfraView, ServiceView, WorktreeView } from "../src/Model.ts"
+import type { EnvVar, InfraView, ServiceView, UsageMap, WorktreeView } from "../src/Model.ts"
 import { runOf, serviceUrl } from "../src/Model.ts"
 import { keyOfInfra, type Line, type Logs, separator } from "./Feeds.ts"
 import { ButtonBar, clickedButton, isClick, isMouseInput, isWheel, isWheelDown, type Mouse, place, useMouse } from "./Mouse.ts"
-import { formatCpu, formatMem, type Usage, useUsage } from "./Stats.ts"
+import { formatCpu, formatMem, usageFor } from "./Stats.ts"
 import { keyColor, stateColor, theme } from "./Theme.ts"
 
 export type Entry =
@@ -16,6 +16,7 @@ export type Entry =
 
 type Props = {
   readonly worktree: WorktreeView
+  readonly usage: UsageMap
   readonly logs: Logs
   readonly daemon: ReadonlyArray<Line>
   readonly rows: number
@@ -119,7 +120,7 @@ const EnvTable = ({ vars }: { readonly vars: ReadonlyArray<EnvVar> }) =>
     )
   )
 
-const ProcessTable = ({ worktree, usage }: { readonly worktree: WorktreeView; readonly usage: Readonly<Record<number, Usage>> }) =>
+const ProcessTable = ({ worktree, usage }: { readonly worktree: WorktreeView; readonly usage: UsageMap }) =>
   h(
     Box,
     { flexDirection: "column" },
@@ -141,7 +142,7 @@ const ProcessTable = ({ worktree, usage }: { readonly worktree: WorktreeView; re
     ),
     ...Object.entries(worktree.services).map(([name, view]) => {
       const run = runOf(view.state)
-      const use = run ? usage[run.pid] : undefined
+      const use = run ? usageFor(usage, run.pid) : undefined
       const note = serviceUrl(view) ?? ("reason" in view.state ? view.state.reason : "")
       return h(
         Text,
@@ -158,20 +159,26 @@ const ProcessTable = ({ worktree, usage }: { readonly worktree: WorktreeView; re
     })
   )
 
-const pidsOf = (worktree: WorktreeView) =>
-  Object.values(worktree.services).flatMap((view) => {
-    const run = runOf(view.state)
-    return run ? [run.pid] : []
-  })
-
-export const Worktree = ({ worktree, logs, daemon, rows, position, onBack, onSwitch, onRestart, onEnv, onOpenUrl, onQuit }: Props) => {
+export const Worktree = ({
+  worktree,
+  usage,
+  logs,
+  daemon,
+  rows,
+  position,
+  onBack,
+  onSwitch,
+  onRestart,
+  onEnv,
+  onOpenUrl,
+  onQuit
+}: Props) => {
   const [selected, setSelected] = useState(0)
   const [filter, setFilter] = useState("")
   const [typing, setTyping] = useState(false)
   const [scroll, setScroll] = useState(0)
   const [env, setEnv] = useState<ReadonlyArray<EnvVar> | undefined>(undefined)
   const [notice, setNotice] = useState("")
-  const usage = useUsage(pidsOf(worktree))
 
   const entries = entriesOf(worktree)
   const entry = entries[Math.min(selected, entries.length - 1)] ?? { _tag: "All" }
@@ -219,7 +226,7 @@ export const Worktree = ({ worktree, logs, daemon, rows, position, onBack, onSwi
     { label: " ⤓ follow ", action: () => setScroll(0) },
     { label: " q quit ", action: onQuit }
   ])
-  const header = { previous: 24, next: 27 + [...worktree.id].length }
+  const header = { previous: 24, next: 26 }
 
   const onMouse = (event: Mouse) => {
     const inSidebar = event.x <= sidebarWidth
@@ -280,9 +287,10 @@ export const Worktree = ({ worktree, logs, daemon, rows, position, onBack, onSwi
       { wrap: "truncate" },
       h(Text, { bold: true, color: theme.accent }, "forkyard "),
       h(Text, { color: theme.muted }, " ◀ worktrees  "),
-      h(Text, { color: theme.accent }, "◀ "),
-      h(Text, { bold: true, color: theme.text }, worktree.id),
-      h(Text, { color: theme.accent }, " ▶"),
+      h(Text, { color: theme.accent }, "◀ ▶  "),
+      h(Text, { bold: true, color: keyColor(worktree.project) }, worktree.project),
+      h(Text, { color: theme.faint }, " › "),
+      h(Text, { bold: true, color: "#ffffff" }, worktree.branch),
       h(Text, { color: theme.muted }, `  ${position}   ${worktree.root}`)
     ),
     h(

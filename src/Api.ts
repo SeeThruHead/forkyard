@@ -1,5 +1,6 @@
 import { Effect, Path, Record, Stream } from "effect"
 import { DaemonLog } from "./DaemonLog.ts"
+import { ProcessUsage } from "./Usage.ts"
 import { EnvResolver } from "./Env.ts"
 import { AbsolutePath, ownerOfWorktree, type RunId } from "./Ids.ts"
 import { InfraManager } from "./InfraManager.ts"
@@ -21,6 +22,7 @@ export const layer = ForkyardRpcs.toLayer(
     const env = yield* EnvResolver
     const path = yield* Path.Path
     const daemonLog = yield* DaemonLog
+    const usage = yield* ProcessUsage
 
     const runLogSource = Effect.fn("Api.runLog")(function* (runId: RunId) {
       const history = yield* runs.lines(runId)
@@ -57,6 +59,7 @@ export const layer = ForkyardRpcs.toLayer(
       Routes: () => router.routes.pipe(Effect.map(Record.map((route) => route.port))),
       Infra: () => infra.running,
       DaemonLogs: () => daemonLog.lines,
+      Usage: () => usage.changes,
       InfraAction: ({ id, infra: name, action }) =>
         supervisor.infraAction(id, name, action).pipe(Effect.mapError((error) => new ForkyardError({ message: error.message })))
     })

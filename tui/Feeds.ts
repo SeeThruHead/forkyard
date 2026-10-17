@@ -1,7 +1,7 @@
 import { Effect, FiberMap, Ref, Stream } from "effect"
 import { ForkyardClient } from "../src/Client.ts"
 import { ownerOfInfra, type RunId, type WorktreeId } from "../src/Ids.ts"
-import { type InfraView, runOf, type ServiceView, type Snapshot, type WorktreeView } from "../src/Model.ts"
+import { type InfraView, runOf, type ServiceView, type Snapshot, type UsageMap, type WorktreeView } from "../src/Model.ts"
 
 export type Line = { readonly key: string; readonly at: number; readonly text: string }
 
@@ -48,6 +48,9 @@ const latestInfraRun = (name: string, instance: string) =>
 
 export const statusFeed = (onSnapshot: (snapshot: Snapshot) => void) =>
   ForkyardClient.use((forkyard) => forkyard.Status().pipe(Stream.runForEach((snapshot) => Effect.sync(() => onSnapshot(snapshot)))))
+
+export const usageFeed = (onUsage: (usage: UsageMap) => void) =>
+  ForkyardClient.use((forkyard) => forkyard.Usage().pipe(Stream.runForEach((usage) => Effect.sync(() => onUsage(usage)))))
 
 export const daemonFeed = (sink: LineSink) =>
   ForkyardClient.use((forkyard) =>
