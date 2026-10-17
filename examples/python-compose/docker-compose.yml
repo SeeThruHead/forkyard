@@ -1,0 +1,44 @@
+# How this team runs locally without forkyard: everything in containers.
+# forkyard reads the environment from here and runs the same code natively.
+name: taskboard
+
+x-python: &python
+  image: python:3.13-slim
+  working_dir: /app
+  volumes: [".:/app", "data:/data"]
+  env_file: [.env.compose]
+
+services:
+  migrate:
+    <<: *python
+    command: python -m taskboard.migrate
+    environment:
+      DATABASE_PATH: /data/taskboard.sqlite
+
+  api:
+    <<: *python
+    command: python -m taskboard.api
+    ports: ["8000:8000"]
+    environment:
+      PORT: "8000"
+      DATABASE_PATH: /data/taskboard.sqlite
+      WEB_URL: http://localhost:8080
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+  worker:
+    <<: *python
+    command: python -m taskboard.worker
+    environment:
+      DATABASE_PATH: /data/taskboard.sqlite
+      POLL_SECONDS: "1"
+
+  web:
+    <<: *python
+    command: python -m taskboard.web
+    ports: ["8080:8080"]
+    environment:
+      PORT: "8080"
+      API_URL: http://api:8000
+
+volumes:
+  data:

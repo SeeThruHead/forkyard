@@ -1,0 +1,18 @@
+{
+  "name": "storefront",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "forkyard up",
+    "down": "forkyard down",
+    "status": "forkyard status"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.62.2"
+  },
+  "devDependencies": {
+    "varlock": "1.23.0"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "@shortly/worker",
+  "private": true,
+  "dependencies": {
+    "@shortly/shared": "workspace:*"
+  }
+}

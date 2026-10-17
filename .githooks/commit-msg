@@ -1,0 +1,2 @@
+#!/bin/sh
+exec node --experimental-strip-types --no-warnings "$(git rev-parse --show-toplevel)/tools/attribution.ts" "$1"

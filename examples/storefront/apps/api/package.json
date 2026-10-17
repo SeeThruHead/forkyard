@@ -1,0 +1,9 @@
+{
+  "name": "@storefront/api",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@storefront/ui": "workspace:*",
+    "pg": "^8.16.0"
+  }
+}

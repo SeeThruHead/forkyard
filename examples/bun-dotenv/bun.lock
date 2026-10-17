@@ -1,0 +1,39 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "shortly",
+    },
+    "apps/api": {
+      "name": "@shortly/api",
+      "dependencies": {
+        "@shortly/shared": "workspace:*",
+      },
+    },
+    "apps/web": {
+      "name": "@shortly/web",
+      "dependencies": {
+        "@shortly/shared": "workspace:*",
+      },
+    },
+    "apps/worker": {
+      "name": "@shortly/worker",
+      "dependencies": {
+        "@shortly/shared": "workspace:*",
+      },
+    },
+    "packages/shared": {
+      "name": "@shortly/shared",
+    },
+  },
+  "packages": {
+    "@shortly/api": ["@shortly/api@workspace:apps/api"],
+
+    "@shortly/shared": ["@shortly/shared@workspace:packages/shared"],
+
+    "@shortly/web": ["@shortly/web@workspace:apps/web"],
+
+    "@shortly/worker": ["@shortly/worker@workspace:apps/worker"],
+  }
+}

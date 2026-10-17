@@ -1,0 +1,6 @@
+{
+  "name": "@storefront/ui",
+  "private": true,
+  "type": "module",
+  "exports": "./page.mjs"
+}

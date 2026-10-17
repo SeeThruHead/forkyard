@@ -1,0 +1,43 @@
+{
+  "name": "forkyard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc --noEmit -p dashboard",
+    "test": "vitest run",
+    "daemon": "node --experimental-strip-types --no-warnings src/main-daemon.ts",
+    "forkyard": "node --experimental-strip-types --no-warnings bin/forkyard.ts",
+    "build:dashboard": "bun build dashboard/src/main.tsx --outdir dashboard/dist --target browser --minify && cp dashboard/index.html dashboard/dist/index.html",
+    "tour": "node --experimental-strip-types --no-warnings harness/tour.ts",
+    "golden-demo": "node --experimental-strip-types --no-warnings harness/golden-demo.ts",
+    "postinstall": "ln -sfn .. node_modules/forkyard"
+  },
+  "dependencies": {
+    "@effect/atom-react": "4.0.0",
+    "@effect/platform-node": "4.0.0",
+    "@effect/sql-pg": "4.0.0",
+    "@effect/sql-sqlite-node": "4.0.0",
+    "effect": "4.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.5"
+  },
+  "pnpm": {
+    "overrides": {
+      "@effect/platform-node-shared": "4.0.0"
+    }
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "forkyard": "bin/forkyard"
+  }
+}

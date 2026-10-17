@@ -1,0 +1,8 @@
+{
+  "name": "@storefront/backoffice",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@storefront/ui": "workspace:*"
+  }
+}
