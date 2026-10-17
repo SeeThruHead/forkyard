@@ -1,2 +1,2 @@
 #!/bin/sh
-exec node --experimental-strip-types --no-warnings "$(dirname "$(realpath "$0")")/forkyard.ts" "$@"
+exec node --conditions=forkyard-source --no-warnings "$(dirname "$(realpath "$0")")/forkyard.ts" "$@"

@@ -1,7 +1,7 @@
 import { Context, Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/http"
 import { Otlp, OtlpSerialization } from "effect/observability"
-import { fileURLToPath } from "node:url"
+import { telemetryDir } from "./Package.ts"
 import type { Port } from "./Ids.ts"
 import { dockerContainer, fetchOk, readyOrExit } from "./infra/Shared.ts"
 import { toolsFor } from "./InfraManager.ts"
@@ -9,9 +9,13 @@ import { Proc } from "./Proc.ts"
 import { Router } from "./Router.ts"
 import { cmd, type InfraTools } from "./Stack.ts"
 
-export const telemetryDir = fileURLToPath(new URL("../telemetry", import.meta.url))
+export { telemetryDir }
 
 export const mapleImage = "forkyard-maple:v0.0.22"
+
+const defaultMaplePort = 14418
+
+const mapleVolume = (port: number) => (port === defaultMaplePort ? "forkyard-maple" : `forkyard-maple-${port}`)
 
 export type TelemetryOptions = {
   readonly port: Port
@@ -66,7 +70,7 @@ export class Maple extends Context.Service<
         const started = yield* dockerContainer(tools, {
           infra: "maple",
           name: `forkyard-maple-${options.port}`,
-          args: ["-p", `127.0.0.1:${options.port}:14318`, "-v", "forkyard-maple:/var/lib/maple", mapleImage]
+          args: ["-p", `127.0.0.1:${options.port}:14318`, "-v", `${mapleVolume(options.port)}:/var/lib/maple`, mapleImage]
         })
 
         yield* readyOrExit("maple", started, fetchOk(`${otlpUrl}/health`), "60 seconds")

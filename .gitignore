@@ -1,8 +1,9 @@
-node_modules/
-run/
-dashboard/dist/
 .devd/
+.DS_Store
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
-.DS_Store
+dashboard/dist/
+dist
+node_modules/
+run/

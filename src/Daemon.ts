@@ -94,6 +94,7 @@ const cliServer = (options: DaemonOptions) =>
   )
 
 export const layer = (options: DaemonOptions) => {
+  const dashboardUrl = `http://forkyard.${options.domain}${options.proxyPort === 80 ? "" : `:${options.proxyPort}`}`
   const otlpUrl = `http://127.0.0.1:${options.maplePort}`
 
   const records = Layer.mergeAll(
@@ -116,11 +117,7 @@ export const layer = (options: DaemonOptions) => {
     Layer.provideMerge(InfraManager.layer({ domain: options.domain, proxyPort: options.proxyPort }))
   )
 
-  const announce = Layer.effectDiscard(
-    Effect.logInfo(
-      `forkyard on ${options.socket}, dashboard at http://forkyard.${options.domain}${options.proxyPort === 80 ? "" : `:${options.proxyPort}`}`
-    )
-  )
+  const announce = Layer.effectDiscard(Effect.logInfo(`forkyard on ${options.socket}, dashboard at ${dashboardUrl}`))
 
   const servers = Layer.mergeAll(
     announce,
@@ -135,7 +132,7 @@ export const layer = (options: DaemonOptions) => {
   )
 
   return servers.pipe(
-    Layer.provide(Api.layer),
+    Layer.provide(Api.layer({ dashboardUrl })),
     Layer.provide(ProcessUsage.layer),
     Layer.provideMerge(worktrees),
     Layer.provide(telemetry),

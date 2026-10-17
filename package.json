@@ -1,28 +1,46 @@
 {
   "name": "forkyard",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Run many worktrees of the same stack side by side, each at its own URLs, from one daemon.",
+  "license": "MIT",
   "bin": {
-    "forkyard": "bin/forkyard"
+    "forkyard": "dist/bin/forkyard.js"
   },
+  "files": [
+    "dist",
+    "dashboard/dist",
+    "telemetry",
+    "README.md"
+  ],
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "forkyard-source": "./src/index.ts",
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./client": {
+      "forkyard-source": "./src/Client.ts",
+      "types": "./dist/src/Client.d.ts",
+      "default": "./dist/src/Client.js"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p dashboard",
     "test": "vitest run",
-    "daemon": "node --experimental-strip-types --no-warnings src/main-daemon.ts",
-    "forkyard": "node --experimental-strip-types --no-warnings bin/forkyard.ts",
+    "daemon": "node --conditions=forkyard-source --no-warnings src/main-daemon.ts",
+    "forkyard": "node --conditions=forkyard-source --no-warnings bin/forkyard.ts",
     "build:dashboard": "bun build dashboard/src/main.tsx --outdir dashboard/dist --target browser --minify && cp dashboard/index.html dashboard/dist/index.html",
-    "tour": "node --experimental-strip-types --no-warnings harness/tour.ts",
-    "golden-demo": "node --experimental-strip-types --no-warnings harness/golden-demo.ts",
-    "postinstall": "ln -sfn .. node_modules/forkyard",
+    "tour": "node --conditions=forkyard-source --no-warnings harness/tour.ts",
+    "golden-demo": "node --conditions=forkyard-source --no-warnings harness/golden-demo.ts",
     "lint": "oxlint",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test",
     "lint:fixtures": "oxlint -c test/lint/fixtures.oxlintrc.json test/lint/fixtures",
-    "prepare": "lefthook install"
+    "prepare": "lefthook install",
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.types.json && pnpm run build:dashboard && chmod +x dist/bin/forkyard.js",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "@effect/atom-react": "4.0.5",
@@ -45,5 +63,8 @@
     "rust-just": "1.59.0",
     "typescript": "^5.9.0",
     "vitest": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

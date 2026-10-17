@@ -1,12 +1,13 @@
 import { NodeRuntime } from "@effect/platform-node"
+import { supplyConfigImports } from "./ConfigImports.ts"
+import { dashboardDir, defaultHome } from "./Package.ts"
 import { Config, Effect, FileSystem, Layer, Path } from "effect"
 import { availableParallelism } from "node:os"
-import { fileURLToPath } from "node:url"
 import * as Daemon from "./Daemon.ts"
 import { Port } from "./Ids.ts"
 import * as Platform from "./Platform.ts"
 
-export const defaultHome = fileURLToPath(new URL("../run", import.meta.url))
+export { defaultHome }
 
 const settings = Config.all({
   proxyPort: Config.Port("FORKYARD_PROXY_PORT").pipe(Config.withDefault(80)),
@@ -14,9 +15,7 @@ const settings = Config.all({
   maplePort: Config.Port("FORKYARD_MAPLE_PORT").pipe(Config.withDefault(14418)),
   startupConcurrency: Config.Int("FORKYARD_STARTUP_CONCURRENCY").pipe(Config.withDefault(availableParallelism())),
   upstreamHost: Config.String("FORKYARD_UPSTREAM_HOST").pipe(Config.withDefault("host.docker.internal")),
-  dashboardDir: Config.String("FORKYARD_DASHBOARD_DIR").pipe(
-    Config.withDefault(fileURLToPath(new URL("../dashboard/dist", import.meta.url)))
-  )
+  dashboardDir: Config.String("FORKYARD_DASHBOARD_DIR").pipe(Config.withDefault(dashboardDir))
 })
 
 type Settings = typeof settings extends Config.Config<infer A> ? A : never
@@ -49,6 +48,7 @@ const optionsFor = (home: string, path: Path.Path, config: Settings): Daemon.Dae
 })
 
 export const runDaemon = Effect.fn("runDaemon")(function* (home: string) {
+  yield* Effect.sync(supplyConfigImports)
   const path = yield* Path.Path
   const config = yield* settings
 

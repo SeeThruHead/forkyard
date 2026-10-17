@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Console, Effect, FileSystem, Layer, Option, Path, Stream } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
@@ -5,10 +6,21 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { ForkyardClient } from "../src/Client.ts"
 import { AbsolutePath, InfraName, ownerOfWorktree, ServiceName, type WorktreeId } from "../src/Ids.ts"
 import { defaultHome, runDaemon } from "../src/main-daemon.ts"
+import { packageVersion, protocolVersion } from "../src/Package.ts"
 import { attach as attachTui, type View } from "../tui/Attach.ts"
 import { type EnvVar, isSettled, runOf, serviceUrl, type Snapshot, stateDetail, stateLabel, type WorktreeView } from "../src/Model.ts"
 
 const home = process.env.FORKYARD_HOME ?? defaultHome
+
+const tooOld = (daemon: string) =>
+  `the running forkyard daemon is ${daemon}, older than this forkyard (v${packageVersion}, protocol ${protocolVersion}). Restart the daemon to upgrade it.`
+
+const requireCompatibleDaemon = ForkyardClient.use((forkyard) => forkyard.Info()).pipe(
+  Effect.mapError(() => tooOld("too old to report its version")),
+  Effect.flatMap((info) =>
+    (info.protocol ?? 0) < protocolVersion ? Effect.fail(tooOld(`v${info.version ?? "?"} (protocol ${info.protocol ?? 0})`)) : Effect.void
+  )
+)
 
 const client = Layer.unwrap(
   Effect.gen(function* () {
@@ -17,7 +29,7 @@ const client = Layer.unwrap(
     const socket = path.join(home, "forkyard.sock")
 
     if (!(yield* fs.exists(socket))) return yield* Effect.fail("forkyard is not running. Start it with: forkyard daemon")
-    return ForkyardClient.layer(socket)
+    return Layer.provideMerge(Layer.effectDiscard(requireCompatibleDaemon), ForkyardClient.layer(socket))
   })
 )
 
@@ -117,7 +129,7 @@ const up = Command.make("up", { branch: branchFlag, profile: profileFlag }, ({ b
       onNone: () => Console.log("still starting, see forkyard status"),
       onSome: (worktree) => Console.log(describe(worktree!))
     })
-    yield* Console.log(`dashboard: http://forkyard.localhost/#/wt/${id}`)
+    yield* Console.log(`dashboard: ${(yield* forkyard.Info()).dashboard}/#/wt/${id}`)
   }).pipe(Effect.scoped, Effect.provide(client))
 ).pipe(Command.withDescription("Start this worktree's stack"))
 

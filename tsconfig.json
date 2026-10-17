@@ -12,7 +12,9 @@
     "erasableSyntaxOnly": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    "customConditions": ["forkyard-source"],
+    "paths": { "forkyard": ["./src/index.ts"], "forkyard/client": ["./src/Client.ts"] }
   },
   "include": [
     "src",
