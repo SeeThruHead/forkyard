@@ -41,6 +41,12 @@ const exists = Effect.fnUntraced(function* (database: string) {
   return (rows[0]?.n ?? 0) > 0
 })
 
+const sealed = Effect.fnUntraced(function* (database: string) {
+  const sql = yield* SqlClient.SqlClient
+  const rows = yield* sql<{ readonly n: number }>`SELECT count(*)::int AS n FROM pg_database WHERE datname = ${database} AND datistemplate`
+  return (rows[0]?.n ?? 0) > 0
+})
+
 const closeTo = (database: string) =>
   SqlClient.SqlClient.use((sql) =>
     sql`ALTER DATABASE ${sql(database)} WITH ALLOW_CONNECTIONS false`.pipe(
@@ -119,8 +125,9 @@ export const docker = (options: Options): InfraSpec => {
       if (source) yield* snapshotGolden(serverPort, template, source)
       yield* onServer(serverPort, "seal golden", seal(template))
     },
-    (effect, _port, golden, worktree) =>
+    (effect, serverPort, golden, worktree) =>
       effect.pipe(
+        Effect.onError(() => onServer(serverPort, "drop unfinished golden", dropDatabase(goldenOf(worktree))).pipe(Effect.ignore)),
         Effect.tap(() =>
           Effect.logInfo(
             `[${name}] built golden ${goldenOf(worktree)} ${"migrate" in golden ? `by migrating, from ${worktree.id}` : `as a snapshot of ${sourceOf(worktree, golden)}`}`
@@ -136,7 +143,8 @@ export const docker = (options: Options): InfraSpec => {
     tools: InfraTools
   ) {
     yield* Effect.annotateCurrentSpan({ "db.namespace": goldenOf(worktree), "forkyard.worktree": worktree.id })
-    if (yield* onServer(serverPort, "check golden", exists(goldenOf(worktree)))) return
+    if (yield* onServer(serverPort, "check golden", sealed(goldenOf(worktree)))) return
+    yield* onServer(serverPort, "drop unfinished golden", dropDatabase(goldenOf(worktree)))
     yield* buildGolden(serverPort, golden, worktree, tools)
   })
 
