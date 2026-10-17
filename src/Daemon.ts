@@ -72,9 +72,28 @@ const otlpProxy = (otlpUrl: string) =>
     })
   )
 
-const dashboardServer = (options: DaemonOptions, otlpUrl: string | undefined) =>
+const fromForeignPage = (request: HttpServerRequest.HttpServerRequest, allowedOrigins: ReadonlyArray<string>) => {
+  const origin = request.headers["origin"]
+  if (!request.url.startsWith("/rpc")) return false
+  if (!origin) return false
+  return !allowedOrigins.includes(origin)
+}
+
+const dashboardOnly = (allowedOrigins: ReadonlyArray<string>) =>
+  HttpRouter.middleware(
+    (httpEffect) =>
+      HttpServerRequest.HttpServerRequest.pipe(
+        Effect.flatMap((request) =>
+          fromForeignPage(request, allowedOrigins) ? Effect.succeed(HttpServerResponse.empty({ status: 403 })) : httpEffect
+        )
+      ),
+    { global: true }
+  )
+
+const dashboardServer = (options: DaemonOptions, otlpUrl: string | undefined, dashboardUrl: string) =>
   HttpRouter.serve(
     Layer.mergeAll(
+      dashboardOnly([dashboardUrl, `http://127.0.0.1:${options.httpPort}`, `http://localhost:${options.httpPort}`]),
       RpcServer.layer(ForkyardRpcs).pipe(Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" }))),
       otlpUrl ? otlpProxy(otlpUrl) : Layer.empty,
       HttpStaticServer.layer({ root: options.dashboardDir, spa: true, cacheControl: "no-store" })
@@ -144,7 +163,7 @@ export const layer = (options: DaemonOptions) => {
   const servers = Layer.mergeAll(
     announce,
     cliServer(options),
-    dashboardServer(options, otlpUrl),
+    dashboardServer(options, otlpUrl, dashboardUrl),
     Proxy.layer({
       mode: options.proxyMode,
       traefikDir: options.traefikDir,

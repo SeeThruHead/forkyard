@@ -55,14 +55,17 @@ export class Router extends Context.Service<
           if (next !== current) yield* fs.writeFileString(file, next)
         })
 
-        const write = Effect.fn("Router.write")(function* (routes: Readonly<Record<string, Route>>) {
-          const temp = `${options.file}.tmp`
-          yield* fs.makeDirectory(path.dirname(options.file), { recursive: true })
-          yield* fs.writeFileString(temp, JSON.stringify(traefikConfig(routes, options.upstreamHost), null, 2))
-          yield* fs.rename(temp, options.file)
-          if (options.hostsFile) yield* writeHosts(options.hostsFile, Object.keys(routes))
-          yield* Effect.annotateCurrentSpan({ "forkyard.routes": Object.keys(routes).length })
-        }, Effect.orDie)
+        const write = Effect.fn("Router.write")(
+          function* (routes: Readonly<Record<string, Route>>) {
+            const temp = `${options.file}.tmp`
+            yield* fs.makeDirectory(path.dirname(options.file), { recursive: true })
+            yield* fs.writeFileString(temp, JSON.stringify(traefikConfig(routes, options.upstreamHost), null, 2))
+            yield* fs.rename(temp, options.file)
+            if (options.hostsFile) yield* writeHosts(options.hostsFile, Object.keys(routes))
+            yield* Effect.annotateCurrentSpan({ "forkyard.routes": Object.keys(routes).length })
+          },
+          Effect.catchCause((cause) => Effect.logError("could not write the routes; the next change retries", cause))
+        )
 
         yield* SubscriptionRef.changes(state).pipe(Stream.debounce("50 millis"), Stream.runForEach(write), Effect.forkScoped)
 
