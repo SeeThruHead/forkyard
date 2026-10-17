@@ -161,19 +161,22 @@ export class Proc extends Context.Service<
         const persist = (batch: ReadonlyArray<RunLine>) =>
           runs.append(batch).pipe(Effect.andThen(Metric.update(Metrics.logLines, batch.length)))
 
+        type Numbered = { readonly entry: OutputLine; readonly record: RunLine }
+
         const outputPipeline = (
-          spawn: SpawnOptions,
           handle: Handle,
           run: RunInfo,
-          publish: (line: { readonly entry: OutputLine; readonly record: RunLine }) => Effect.Effect<void>
+          onLine: (line: Numbered) => Effect.Effect<void>,
+          announce: (line: Numbered) => Effect.Effect<void>
         ) =>
           Stream.merge(lines(handle.stdout, "stdout"), lines(handle.stderr, "stderr")).pipe(
             Stream.zipWithIndex,
             Stream.mapEffect(numbered(run)),
-            Stream.tap(publish),
-            Stream.map(({ record }) => record),
-            Stream.groupedWithin(200, "250 millis"),
-            Stream.runForEach(persist),
+            Stream.tap(onLine),
+            Stream.groupedWithin(200, "100 millis"),
+            Stream.runForEach((batch) =>
+              persist(batch.map((line) => line.record)).pipe(Effect.andThen(Effect.forEach(batch, announce, { discard: true })))
+            ),
             Effect.ignore
           )
 
@@ -190,12 +193,10 @@ export class Proc extends Context.Service<
           const logger = spawn.telemetry && options.otlpUrl ? yield* processLogger(spawn, run, options.otlpUrl) : undefined
           const exported = exportLine(logger)
           const readyCheck = signalReadyLine(spawn, logged)
-          const publish = ({ entry, record }: { readonly entry: OutputLine; readonly record: RunLine }) =>
-            Effect.all([status.log({ ...record, owner: spawn.owner, service: spawn.service }), exported(entry), readyCheck(entry)], {
-              discard: true
-            })
+          const onLine = ({ entry }: Numbered) => Effect.all([exported(entry), readyCheck(entry)], { discard: true })
+          const announce = ({ record }: Numbered) => status.log({ ...record, owner: spawn.owner, service: spawn.service })
 
-          yield* outputPipeline(spawn, handle, run, publish).pipe(
+          yield* outputPipeline(handle, run, onLine, announce).pipe(
             Effect.withParentSpan(span),
             Effect.withTracerEnabled(false),
             Effect.forkScoped

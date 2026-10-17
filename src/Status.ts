@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, PubSub, Record, Stream, SubscriptionRef } from "effect"
+import { Context, Effect, Layer, PubSub, Record, type Scope, Stream, SubscriptionRef } from "effect"
 import type { InfraName, ServiceName, WorktreeId } from "./Ids.ts"
 import type { InfraView, LogLine, ServiceState, ServiceView, Snapshot, WorktreeView } from "./Model.ts"
 
@@ -18,6 +18,7 @@ export class Status extends Context.Service<
     readonly changes: Stream.Stream<Snapshot>
     readonly log: (line: LogLine) => Effect.Effect<void>
     readonly logs: Stream.Stream<LogLine>
+    readonly followLogs: Effect.Effect<Stream.Stream<LogLine>, never, Scope.Scope>
   }
 >()("forkyard/Status") {
   static readonly layer = Layer.effect(
@@ -55,7 +56,8 @@ export class Status extends Context.Service<
         snapshot: SubscriptionRef.get(state),
         changes: SubscriptionRef.changes(state),
         log: (line) => PubSub.publish(lines, line).pipe(Effect.asVoid),
-        logs: Stream.fromPubSub(lines)
+        logs: Stream.fromPubSub(lines),
+        followLogs: PubSub.subscribe(lines).pipe(Effect.map(Stream.fromSubscription))
       })
     })
   )

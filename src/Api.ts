@@ -29,11 +29,12 @@ export const layer = (options: { readonly dashboardUrl: string }) =>
       const upgrade = yield* Upgrade
 
       const runLogSource = Effect.fn("Api.runLog")(function* (runId: RunId) {
+        const following = yield* status.followLogs
         const history = yield* runs.lines(runId)
         if (yield* runs.ended(runId)) return Stream.fromIterable(history)
 
         const last = history.at(-1)?.seq ?? -1
-        const live = status.logs.pipe(
+        const live = following.pipe(
           Stream.filter((line) => line.runId === runId && line.seq > last),
           Stream.map((line) => ({ runId: line.runId, seq: line.seq, at: line.at, line: line.line }))
         )
