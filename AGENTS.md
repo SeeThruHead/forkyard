@@ -12,6 +12,16 @@ Never add AI or agent attribution to anything in this repository: no co-author t
 
 macOS and Linux. Windows is supported through WSL, which is Linux; native Windows stops at startup with a pointer to WSL. Everything that differs between operating systems lives in `src/platform/Os.ts` as one service with a layer per OS.
 
+## How forkyard starts
+
+Forkyard runs on Node 24+ or Bun, and is installed twice: globally for the command, and in each repo as a dev dependency next to `effect`.
+
+1. `launcher/forkyard` is the installed command. It picks the runtime in `pick_runtime`: `FORKYARD_RUNTIME` if set, Bun if forkyard was installed with `bun add -g`, otherwise Node 24+, and Bun only when there is no Node.
+2. `bin/forkyard.ts` hands over to the repo's own forkyard when the current folder has one in `node_modules`, passing the runtime along, so a repo always runs the version it pinned. `daemon`, `service` and `update` never hand over: one daemon serves every repo.
+3. `bin/cli.ts` is the CLI.
+
+A config imports `forkyard` and `effect` from its repo's `node_modules`, like any other package; the daemon loads it with a plain `import()`. Two things differ by runtime: the SQLite driver in `src/Store.ts` (chosen by `src/platform/Runtime.ts`), and restarting a foreground daemon after an upgrade in `src/platform/Os.ts`, which replaces the process on Node and runs a fresh one on Bun, which has no `execve`.
+
 ## What the linter enforces
 
 `pnpm run lint` runs oxlint with the project rules in `lint/forkyard.js`:

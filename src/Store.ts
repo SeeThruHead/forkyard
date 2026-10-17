@@ -1,6 +1,6 @@
-import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-node"
 import { Effect, Layer } from "effect"
-import { Migrator, SqlClient } from "effect/sql"
+import { Migrator, SqlClient, type SqlError } from "effect/sql"
+import { runtimeName } from "./platform/Runtime.ts"
 
 const migrations = Migrator.fromRecord({
   "1_processes": Effect.gen(function* () {
@@ -63,5 +63,12 @@ const migrations = Migrator.fromRecord({
   })
 })
 
+const sqliteClient = (filename: string): Promise<Layer.Layer<SqlClient.SqlClient, SqlError.SqlError>> =>
+  runtimeName === "bun"
+    ? import("@effect/sql-sqlite-bun").then(({ SqliteClient }) => SqliteClient.layer({ filename }))
+    : import("@effect/sql-sqlite-node").then(({ SqliteClient }) => SqliteClient.layer({ filename }))
+
+const migrate = Migrator.make({})
+
 export const layer = (filename: string) =>
-  SqliteMigrator.layer({ loader: migrations }).pipe(Layer.provideMerge(SqliteClient.layer({ filename })))
+  Layer.effectDiscard(migrate({ loader: migrations })).pipe(Layer.provideMerge(Layer.unwrap(Effect.promise(() => sqliteClient(filename)))))

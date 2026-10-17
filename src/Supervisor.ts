@@ -4,6 +4,7 @@ import {
   Config,
   Context,
   Deferred,
+  Duration,
   Effect,
   FileSystem,
   Layer,
@@ -46,6 +47,10 @@ import { changesUnder } from "./Watch.ts"
 
 export class DependencyFailed extends Schema.TaggedError<DependencyFailed>()("DependencyFailed", {
   service: Schema.String
+}) {}
+
+export class ExitedBeforeReady extends Schema.TaggedError<ExitedBeforeReady>()("ExitedBeforeReady", {
+  message: Schema.String
 }) {}
 
 type Ready = Deferred.Deferred<void, DependencyFailed>
@@ -111,6 +116,10 @@ const endState = (run: RunRef, outcome: Outcome, restarting: boolean): ServiceSt
   if (outcome._tag === "Exited" && outcome.code === 0) return { _tag: "Done", run }
   return { _tag: "Failed", reason: describe(outcome) }
 }
+
+const restartDelay = (failures: number) => Duration.seconds(failures === 0 ? 1 : Math.min(30, 2 ** failures))
+
+type Attempt = { readonly again: boolean; readonly failures: number }
 
 const readyLineOf = (service: ServiceNode) =>
   service.lifecycle._tag === "LongRunning" && service.lifecycle.ready._tag === "LogLine"
@@ -300,13 +309,19 @@ export class Supervisor extends Context.Service<
             Effect.map((entries): OwnedEnv => owned("forkyard:ports", Object.fromEntries(entries)))
           )
 
-        const awaitReadiness = (service: ServiceNode, spawned: Spawned, port: Port | undefined) => {
+        const exitedBeforeReady = (spawned: Spawned) =>
+          spawned.exited.pipe(Effect.flatMap((code) => new ExitedBeforeReady({ message: `exited with ${code} before it was ready` })))
+
+        const readyCheck = (service: ServiceNode, spawned: Spawned, port: Port | undefined) => {
           if (service.lifecycle._tag === "RunOnce") return Effect.void
-          if (service.lifecycle.ready._tag === "LogLine") return spawned.logged.pipe(Effect.raceFirst(spawned.exited), Effect.asVoid)
+          if (service.lifecycle.ready._tag === "LogLine") return spawned.logged
           if (service.lifecycle.ready._tag === "Started") return Effect.void
           if (!port || service.exposure._tag !== "Routed") return Effect.void
-          return waitHealthy(port, service.exposure.health).pipe(Effect.raceFirst(spawned.exited), Effect.asVoid)
+          return waitHealthy(port, service.exposure.health)
         }
+
+        const awaitReadiness = (service: ServiceNode, spawned: Spawned, port: Port | undefined) =>
+          readyCheck(service, spawned, port).pipe(Effect.raceFirst(exitedBeforeReady(spawned)), Effect.asVoid)
 
         const startProcess = Effect.fn("Supervisor.startService", { root: true })(function* (
           worktree: Worktree,
@@ -386,11 +401,18 @@ export class Supervisor extends Context.Service<
           ready: Ready
         ) {
           const nextChange = yield* watching(worktree, lifecycle.watch)
+          const failed = (cause: Cause.Cause<unknown>) => setState(worktree, service, { _tag: "Failed", reason: reasonOf(cause) })
 
-          return yield* runLongRunning(worktree, service, lifecycle.onExit, ownedEnv, ready, nextChange).pipe(
-            Effect.catchCause((cause) => setState(worktree, service, { _tag: "Failed", reason: reasonOf(cause) }).pipe(Effect.as(true))),
-            Effect.repeat({ schedule: Schedule.spaced("1 second"), while: (again) => again })
-          )
+          const attempt = (failures: number): Effect.Effect<void> =>
+            runLongRunning(worktree, service, lifecycle.onExit, ownedEnv, ready, nextChange).pipe(
+              Effect.map((again): Attempt => ({ again, failures: 0 })),
+              Effect.catchCause((cause) => failed(cause).pipe(Effect.as<Attempt>({ again: true, failures: failures + 1 }))),
+              Effect.flatMap((next) =>
+                next.again ? Effect.sleep(restartDelay(next.failures)).pipe(Effect.andThen(attempt(next.failures))) : Effect.void
+              )
+            )
+
+          return yield* attempt(0)
         })
 
         const runToExit = Effect.fnUntraced(function* (worktree: Worktree, service: ServiceNode, ownedEnv: OwnedEnv) {

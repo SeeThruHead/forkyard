@@ -1,0 +1,30 @@
+#!/bin/sh
+self="$(realpath "$0")"
+entry="$(dirname "$self")/../dist/bin/forkyard.js"
+
+installed_by_bun() {
+  case "$self" in
+    "${BUN_INSTALL:-$HOME/.bun}"/install/global/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+has_node_24() {
+  version="$(node --version 2>/dev/null)" || return 1
+  major="${version#v}"
+  [ "${major%%.*}" -ge 24 ]
+}
+
+pick_runtime() {
+  if [ -n "${FORKYARD_RUNTIME:-}" ]; then echo "$FORKYARD_RUNTIME"; return; fi
+  if installed_by_bun; then echo bun; return; fi
+  if has_node_24; then echo node; return; fi
+  if command -v bun >/dev/null 2>&1; then echo bun; return; fi
+  echo none
+}
+
+case "$(pick_runtime)" in
+  bun) exec bun "$entry" "$@" ;;
+  node) exec node --no-warnings "$entry" "$@" ;;
+  *) echo "forkyard needs Node 24 or newer, or Bun. FORKYARD_RUNTIME, if set, must be node or bun." >&2; exit 1 ;;
+esac

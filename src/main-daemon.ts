@@ -1,7 +1,8 @@
 import { NodeRuntime } from "@effect/platform-node"
 import { lookup } from "node:dns/promises"
 import { access, constants } from "node:fs/promises"
-import { supplyConfigImports } from "./ConfigImports.ts"
+import { connect } from "node:net"
+import { ForkyardError } from "./Protocol.ts"
 import { parseHeaders, type TelemetryTarget } from "./Telemetry.ts"
 import { Os } from "./platform/Os.ts"
 import { Upgrade } from "./Upgrade.ts"
@@ -36,13 +37,25 @@ const survivePipeClose = Effect.sync(() => {
   process.stderr.on("error", () => undefined)
 })
 
+const daemonAnswersOn = (socket: string) =>
+  Effect.callback<boolean>((resume) => {
+    const connection = connect(socket)
+    connection.once("connect", () => {
+      connection.destroy()
+      resume(Effect.succeed(true))
+    })
+    connection.once("error", () => resume(Effect.succeed(false)))
+  })
+
 const prepareHome = Effect.fn("prepareHome")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
   const os = yield* Os
+  const socket = os.ipcPath(home)
 
+  if (yield* daemonAnswersOn(socket)) return yield* new ForkyardError({ message: `a forkyard daemon is already running on ${socket}` })
   yield* fs.makeDirectory(path.join(home, "traefik"), { recursive: true })
-  yield* fs.remove(os.ipcPath(home), { force: true })
+  yield* fs.remove(socket, { force: true })
 })
 
 const localhostResolves = Effect.tryPromise(() => lookup("forkyard-probe.localhost")).pipe(
@@ -99,7 +112,6 @@ const optionsFor = (
 })
 
 export const runDaemon = Effect.fn("runDaemon")(function* (home: string) {
-  yield* Effect.sync(supplyConfigImports)
   const path = yield* Path.Path
   const config = yield* settings
 

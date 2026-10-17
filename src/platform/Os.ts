@@ -1,6 +1,7 @@
 import { NodeChildProcessSpawner, NodeFileSystem, NodePath } from "@effect/platform-node"
 import { Context, Effect, Layer } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 import type { Command, Run } from "../Stack.ts"
 
@@ -50,9 +51,15 @@ const readTable = (command: string, args: ReadonlyArray<string>) =>
     Effect.orElseSucceed((): ReadonlyArray<ProcessRow> => [])
   )
 
-const replaceSelf = Effect.sync(() =>
-  process.execve?.(process.execPath, [process.execPath, ...process.execArgv, ...process.argv.slice(1)], process.env)
-)
+export const runInstead = (launcher: string, args: ReadonlyArray<string>, env: Record<string, string>) =>
+  spawnSync(launcher, [...args], { stdio: "inherit", env: { ...process.env, ...env } }).status ?? 1
+
+const ownCommand = () => [...process.execArgv, ...process.argv.slice(1)]
+
+const replaceSelf = Effect.sync(() => {
+  if (process.execve) return process.execve(process.execPath, [process.execPath, ...ownCommand()], process.env)
+  process.exit(spawnSync(process.execPath, ownCommand(), { stdio: "inherit" }).status ?? 1)
+})
 
 const unix = (name: "darwin" | "linux", spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]): Os["Service"] => ({
   name,

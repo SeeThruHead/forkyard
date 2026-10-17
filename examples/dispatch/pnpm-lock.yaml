@@ -6,7 +6,14 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      effect:
+        specifier: 4.0.5
+        version: 4.0.5
+      forkyard:
+        specifier: link:../..
+        version: link:../..
 
   apps/api:
     dependencies:

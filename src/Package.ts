@@ -28,7 +28,7 @@ export const isSourceCheckout = existsSync(join(packageRoot, ".git"))
 
 export const defaultHome = isSourceCheckout ? fromPackage("run") : join(homedir(), ".forkyard")
 
-export const cliPath = isSourceCheckout ? fromPackage("bin", "forkyard") : fromPackage("dist", "bin", "forkyard.js")
+export const cliPath = isSourceCheckout ? fromPackage("bin", "forkyard") : fromPackage("launcher", "forkyard")
 
 export const dashboardDir = fromPackage("dashboard", "dist")
 

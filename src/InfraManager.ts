@@ -52,21 +52,12 @@ export class InfraManager extends Context.Service<
       Effect.gen(function* () {
         const proc = yield* Proc
         const router = yield* Router
-        const specs = yield* Ref.make<Readonly<Record<string, InfraSpec>>>({})
-        const origins = yield* Ref.make<Readonly<Record<string, Worktree>>>({})
+        const requests = yield* Ref.make<Readonly<Record<string, { readonly spec: InfraSpec; readonly origin: Worktree }>>>({})
 
         const hostFor = (name: InfraName, route: string, instance: string) =>
           instance === "shared" ? `${route}.${options.domain}` : `${route}.${instance}.${options.domain}`
 
         const urlFor = (host: string) => `http://${host}${options.proxyPort === 80 ? "" : `:${options.proxyPort}`}`
-
-        const specFor = (name: InfraName) =>
-          Ref.get(specs).pipe(
-            Effect.flatMap((all) => {
-              const spec = all[name]
-              return spec ? Effect.succeed(spec) : Effect.fail(new InfraError({ infra: name, message: "unknown infra" }))
-            })
-          )
 
         const exposeRoutes = (name: InfraName, instance: string, started: InfraStarted) =>
           Effect.forEach(Object.entries(started.routes), ([route, port]) => router.expose({ host: hostFor(name, route, instance), port }), {
@@ -79,15 +70,14 @@ export class InfraManager extends Context.Service<
         const startInstance = Effect.fn("InfraManager.start", { root: true })(
           function* (key: string) {
             const { name, instance } = parseKey(key)
-            const spec = yield* specFor(name)
+            const request = (yield* Ref.get(requests))[key]
+            if (!request) return yield* new InfraError({ infra: name, message: "no worktree asked for this infra" })
+            const { spec, origin } = request
             yield* Effect.annotateCurrentSpan({
               "forkyard.infra": name,
               "forkyard.infra.instance": instance,
               "forkyard.infra.scope": spec.scope
             })
-
-            const origin = (yield* Ref.get(origins))[key]
-            if (!origin) return yield* new InfraError({ infra: name, message: "no worktree asked for this infra" })
 
             const leases = yield* Effect.forEach(spec.uses ?? [], (dependency) => acquire(dependency, origin), { concurrency: "unbounded" })
             const usesEnv = leases.reduce<Env>((all, lease) => ({ ...all, ...lease.env }), {})
@@ -124,8 +114,7 @@ export class InfraManager extends Context.Service<
 
           const instance = instanceOf(spec, worktree)
           const key = keyOf(spec.name, instance)
-          yield* Ref.update(specs, (all) => ({ ...all, [spec.name]: spec }))
-          yield* Ref.update(origins, (all) => (all[key] ? all : { ...all, [key]: worktree }))
+          yield* Ref.update(requests, (all) => ({ ...all, [key]: { spec, origin: worktree } }))
           const server = yield* RcMap.get(servers, key)
           const env = yield* spec.tenant(server, worktree, toolsFor(proc, instance))
 

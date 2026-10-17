@@ -1,0 +1,9 @@
+{
+  "name": "boxed",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "effect": "4.0.5",
+    "forkyard": "file:/tmp/forkyard.tgz"
+  }
+}

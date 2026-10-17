@@ -20,13 +20,21 @@ const StackExport = Schema.Struct({
   build: Schema.declare((value): value is (...args: ReadonlyArray<never>) => unknown => typeof value === "function")
 })
 
+const missingPackage = (cause: unknown) => /Cannot find (?:package|module) ['"]([^'"./][^'"]*)['"]/.exec(String(cause))?.[1]
+
+const loadFailure = (stackFile: AbsolutePath, cause: unknown) => {
+  const missing = missingPackage(cause)
+  if (!missing) return `cannot load ${stackFile}: ${String(cause)}`
+  return `${stackFile} imports ${missing}, but this repo does not have it installed. Add it as a dev dependency, for example: pnpm add -D ${missing}`
+}
+
 const loadStack = Effect.fn("Worktrees.loadStack")(function* (stackFile: AbsolutePath) {
   yield* Effect.annotateCurrentSpan({ "forkyard.stack_file": stackFile })
   const version = yield* Clock.currentTimeMillis
 
   const exported = yield* Effect.tryPromise({
     try: () => import(`${stackFile}?t=${version}`).then((module: { readonly default?: unknown }) => module.default),
-    catch: (cause) => new ForkyardError({ message: `cannot load ${stackFile}: ${String(cause)}` })
+    catch: (cause) => new ForkyardError({ message: loadFailure(stackFile, cause) })
   })
   return yield* Schema.decodeUnknownEffect(StackExport)(exported).pipe(
     Effect.as(exported as Stack),
@@ -144,7 +152,10 @@ export class Worktrees extends Context.Service<
           Effect.flatMap((rows) =>
             Effect.forEach(
               rows,
-              (row) => up({ root: row.root, branch: row.branch, profile: row.profile, stackFile: row.stack_file }).pipe(Effect.ignore),
+              (row) =>
+                up({ root: row.root, branch: row.branch, profile: row.profile, stackFile: row.stack_file }).pipe(
+                  Effect.catch((error) => Effect.logWarning(`could not restore ${row.slug}: ${error.message}`))
+                ),
               {
                 concurrency: "unbounded",
                 discard: true

@@ -36,11 +36,18 @@ const useRows = () => {
 
 type AppProps = { readonly context: Context.Context<ForkyardClient>; readonly initial: View }
 
+const shownWorktree = (view: View, snapshot: Snapshot): WorktreeId | undefined => {
+  if (view._tag === "Worktree") return view.id
+  if (view._tag === "Home") return undefined
+  return Object.values(snapshot).find((worktree) => worktree.root === view.root)?.id
+}
+
 const App = ({ context, initial }: AppProps) => {
   const { exit } = useApp()
   const fullRows = useRows()
   const [view, setView] = useState<View>(initial)
-  const [snapshot, setSnapshot] = useState<Snapshot>({})
+  const [received, setSnapshot] = useState<Snapshot | undefined>(undefined)
+  const snapshot = received ?? {}
   const [daemon, setDaemon] = useState<ReadonlyArray<Line>>([])
   const [usage, setUsage] = useState<UsageMap>({})
   const [connected, setConnected] = useState(true)
@@ -73,7 +80,7 @@ const App = ({ context, initial }: AppProps) => {
     }
   }, [])
 
-  const worktreeId = view._tag === "Worktree" ? view.id : undefined
+  const worktreeId = shownWorktree(view, snapshot)
 
   useEffect(() => {
     dispatch({ _tag: "Reset" })
@@ -108,15 +115,9 @@ const App = ({ context, initial }: AppProps) => {
       call(ForkyardClient.use((forkyard) => forkyard.Env({ id, service: ServiceName.make(service) })))
 
   const worktree = worktreeId ? snapshot[worktreeId] : undefined
-  const checkoutRoot = view._tag === "Checkout" ? view.root : undefined
-  const started = Object.values(snapshot).find((other) => other.root === checkoutRoot)
-
-  useEffect(() => {
-    if (started) setView({ _tag: "Worktree", id: started.id })
-  }, [started?.id])
 
   const start = (root: AbsolutePath, branch: string) =>
-    call(ForkyardClient.use((forkyard) => forkyard.Up({ root, branch }))).then(({ id }) => setView({ _tag: "Worktree", id }))
+    call(ForkyardClient.use((forkyard) => forkyard.Up({ root, branch })).pipe(Effect.asVoid))
 
   const framed = (content: ReactElement) =>
     connected ? (
@@ -130,7 +131,14 @@ const App = ({ context, initial }: AppProps) => {
       </Box>
     )
 
-  if (view._tag === "Checkout")
+  if (!received)
+    return framed(
+      <Text color={theme.muted} wrap="truncate">
+        {" connecting to forkyard…"}
+      </Text>
+    )
+
+  if (view._tag === "Checkout" && !worktree)
     return framed(
       <NotRunning
         root={view.root}
