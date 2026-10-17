@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -18,9 +18,7 @@ const findRoot = (dir: string): string => {
   return findRoot(parent)
 }
 
-export const isCompiled = import.meta.url.includes("/$bunfs/")
-
-export const packageRoot = isCompiled ? dirname(realpathSync(process.execPath)) : findRoot(dirname(fileURLToPath(import.meta.url)))
+export const packageRoot = findRoot(dirname(fileURLToPath(import.meta.url)))
 
 export const packageVersion: string = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")).version
 
@@ -30,13 +28,7 @@ export const isSourceCheckout = existsSync(join(packageRoot, ".git"))
 
 export const defaultHome = isSourceCheckout ? fromPackage("run") : join(homedir(), ".forkyard")
 
-const findCli = () => {
-  if (isCompiled) return process.execPath
-  if (isSourceCheckout) return fromPackage("bin", "forkyard")
-  return fromPackage("launcher", "forkyard")
-}
-
-export const cliPath = findCli()
+export const cliPath = isSourceCheckout ? fromPackage("bin", "forkyard") : fromPackage("launcher", "forkyard")
 
 export const dashboardDir = fromPackage("dashboard", "dist")
 

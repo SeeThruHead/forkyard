@@ -3,7 +3,6 @@ import { Context, Effect, Layer } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
-import { isCompiled } from "../Package.ts"
 import type { Command, Run } from "../Stack.ts"
 
 export type ProcessRow = { readonly pid: number; readonly ppid: number; readonly cpu: number; readonly rssKb: number }
@@ -55,7 +54,7 @@ const readTable = (command: string, args: ReadonlyArray<string>) =>
 export const runInstead = (launcher: string, args: ReadonlyArray<string>, env: Record<string, string>) =>
   spawnSync(launcher, [...args], { stdio: "inherit", env: { ...process.env, ...env } }).status ?? 1
 
-const ownCommand = () => (isCompiled ? process.argv.slice(2) : [...process.execArgv, ...process.argv.slice(1)])
+const ownCommand = () => [...process.execArgv, ...process.argv.slice(1)]
 
 const replaceSelf = Effect.sync(() => {
   if (process.execve) return process.execve(process.execPath, [process.execPath, ...ownCommand()], process.env)

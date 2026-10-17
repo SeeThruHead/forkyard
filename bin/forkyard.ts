@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, realpathSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { isCompiled, packageRoot } from "../src/Package.ts"
+import { packageRoot } from "../src/Package.ts"
 import { runInstead } from "../src/platform/Os.ts"
 import { runtimeName } from "../src/platform/Runtime.ts"
 
@@ -32,8 +32,6 @@ const repoLauncher = () => {
 
 const launcher = repoLauncher()
 
-const runtimeForRepo = isCompiled ? {} : { FORKYARD_RUNTIME: runtimeName }
-
-if (launcher) process.exit(runInstead(launcher, process.argv.slice(2), runtimeForRepo))
+if (launcher) process.exit(runInstead(launcher, process.argv.slice(2), { FORKYARD_RUNTIME: runtimeName }))
 
 await import("./cli.ts")

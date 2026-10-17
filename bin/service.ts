@@ -1,7 +1,7 @@
 import { Console, Effect, FileSystem, Path, type PlatformError } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { homedir } from "node:os"
-import { fromPackage, isCompiled, isSourceCheckout, packageRoot } from "../src/Package.ts"
+import { fromPackage, isSourceCheckout, packageRoot } from "../src/Package.ts"
 import { osName } from "../src/platform/Os.ts"
 import { runtimeFlags } from "../src/platform/Runtime.ts"
 
@@ -15,7 +15,6 @@ const plistPath = () => `${homedir()}/Library/LaunchAgents/${label}.plist`
 const unitPath = () => `${homedir()}/.config/systemd/user/forkyard.service`
 
 const daemonCommand = (): ReadonlyArray<string> => {
-  if (isCompiled) return [process.execPath, "daemon"]
   if (isSourceCheckout)
     return [process.execPath, "--conditions=forkyard-source", ...runtimeFlags, fromPackage("bin", "forkyard.ts"), "daemon"]
   return [process.execPath, ...runtimeFlags, fromPackage("dist", "bin", "forkyard.js"), "daemon"]
