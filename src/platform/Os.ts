@@ -1,13 +1,12 @@
 import { NodeChildProcessSpawner, NodeFileSystem, NodePath } from "@effect/platform-node"
 import { Context, Effect, Layer } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
-import { createHash } from "node:crypto"
 import { join } from "node:path"
 import type { Command, Run } from "../Stack.ts"
 
 export type ProcessRow = { readonly pid: number; readonly ppid: number; readonly cpu: number; readonly rssKb: number }
 
-export type OsName = "darwin" | "linux" | "windows"
+export type OsName = "darwin" | "linux"
 
 export type ProxyNetworking = { readonly args: ReadonlyArray<string>; readonly listenPort: (port: number) => number }
 
@@ -21,7 +20,6 @@ export class Os extends Context.Service<
     readonly killTree: (pid: number) => Effect.Effect<void>
     readonly processTable: Effect.Effect<ReadonlyArray<ProcessRow>>
     readonly ipcPath: (home: string) => string
-    readonly ipcIsFile: boolean
     readonly hostsFile: string
     readonly dockerProxy: (port: number) => ProxyNetworking
     readonly dockerUpstream: string
@@ -66,7 +64,6 @@ const unix = (name: "darwin" | "linux", spawner: ChildProcessSpawner.ChildProces
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)
   ),
   ipcPath: (home) => join(home, "forkyard.sock"),
-  ipcIsFile: true,
   hostsFile: "/etc/hosts",
   dockerProxy:
     name === "linux"
@@ -76,47 +73,18 @@ const unix = (name: "darwin" | "linux", spawner: ChildProcessSpawner.ChildProces
   restartInPlace: replaceSelf
 })
 
-const windowsTable = [
-  "-NoProfile",
-  "-Command",
-  'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) 0 $([math]::Round($_.WorkingSetSize / 1024))" }'
-]
+export const osName = (platform: NodeJS.Platform = process.platform): OsName => (platform === "darwin" ? "darwin" : "linux")
 
-const windows = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]): Os["Service"] => {
-  const run = (command: string, args: ReadonlyArray<string>) =>
-    spawner.exitCode(ChildProcess.make(command, [...args], { stdout: "ignore", stderr: "ignore" })).pipe(Effect.ignore)
-  return {
-    name: "windows",
-    commandFor: (step) => (isShell(step) ? { command: "cmd.exe", args: ["/d", "/s", "/c", step.shell] } : step),
-    spawnGroup: { detached: false, killSignal: undefined },
-    isAlive,
-    killTree: (pid) => run("taskkill", ["/PID", String(pid), "/T", "/F"]),
-    processTable: readTable("powershell.exe", windowsTable).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
-    ipcPath: (home) => `\\\\.\\pipe\\forkyard-${createHash("sha256").update(home).digest("hex").slice(0, 12)}`,
-    ipcIsFile: false,
-    hostsFile: "C:\\Windows\\System32\\drivers\\etc\\hosts",
-    dockerProxy: (port) => ({ args: ["-p", `${port}:80`], listenPort: () => 80 }),
-    dockerUpstream: "host.docker.internal",
-    restartInPlace: run(process.execPath, [...process.execArgv, ...process.argv.slice(1)])
-  }
-}
+export const unsupportedHere = (platform: NodeJS.Platform = process.platform) =>
+  platform === "win32" ? "forkyard runs on Windows through WSL: install it inside your WSL distribution and run it there." : undefined
 
-export const osName = (platform: NodeJS.Platform = process.platform): OsName => {
-  if (platform === "darwin") return "darwin"
-  if (platform === "win32") return "windows"
-  return "linux"
-}
-
-export const openUrlCommand = (url: string, name: OsName = osName()): Command => {
-  if (name === "darwin") return { command: "open", args: [url] }
-  if (name === "windows") return { command: "cmd.exe", args: ["/d", "/c", "start", "", url] }
-  return { command: "xdg-open", args: [url] }
-}
+export const openUrlCommand = (url: string, name: OsName = osName()): Command =>
+  name === "darwin" ? { command: "open", args: [url] } : { command: "xdg-open", args: [url] }
 
 export const layerFor = (name: OsName) =>
   Layer.effect(
     Os,
-    ChildProcessSpawner.ChildProcessSpawner.use((spawner) => Effect.succeed(name === "windows" ? windows(spawner) : unix(name, spawner)))
+    ChildProcessSpawner.ChildProcessSpawner.use((spawner) => Effect.succeed(unix(name, spawner)))
   ).pipe(Layer.provide(NodeChildProcessSpawner.layer), Layer.provide(NodeFileSystem.layer), Layer.provide(NodePath.layer))
 
 export const layer = layerFor(osName())

@@ -141,49 +141,7 @@ const systemd: ServiceManager = {
   status: run("systemctl", "--user", "status", "--no-pager", "forkyard").pipe(Effect.asVoid)
 }
 
-const windowsScript = () => `${process.env.FORKYARD_HOME ?? `${homedir()}\\.forkyard`}\\forkyard-daemon.cmd`
-
-const cmdScript = (logFile: string) =>
-  [
-    "@echo off",
-    ...Object.entries(serviceEnv()).map(([key, value]) => `set "${key}=${value}"`),
-    ":run",
-    `${daemonCommand()
-      .map((part) => `"${part}"`)
-      .join(" ")} >> "${logFile}" 2>&1`,
-    "timeout /t 2 /nobreak > nul",
-    "goto run",
-    ""
-  ].join("\r\n")
-
-const taskScheduler: ServiceManager = {
-  definition: windowsScript(),
-  install: Effect.fnUntraced(function* (_home, logFile) {
-    const fs = yield* FileSystem.FileSystem
-    yield* fs.writeFileString(windowsScript(), cmdScript(logFile))
-    yield* run("schtasks", "/Create", "/TN", "forkyard", "/TR", `"${windowsScript()}"`, "/SC", "ONLOGON", "/F").pipe(
-      Effect.flatMap(mustSucceed("schtasks /Create"))
-    )
-    yield* run("schtasks", "/Run", "/TN", "forkyard").pipe(Effect.flatMap(mustSucceed("schtasks /Run")))
-    return `a Task Scheduler task that starts at logon and restarts the daemon when it exits (${windowsScript()})`
-  }),
-  uninstall: Effect.gen(function* () {
-    yield* quietly("schtasks", "/End", "/TN", "forkyard")
-    yield* quietly("schtasks", "/Delete", "/TN", "forkyard", "/F")
-    yield* FileSystem.FileSystem.use((fs) => fs.remove(windowsScript(), { force: true }))
-  }),
-  restart: quietly("schtasks", "/End", "/TN", "forkyard").pipe(
-    Effect.andThen(run("schtasks", "/Run", "/TN", "forkyard")),
-    Effect.flatMap(mustSucceed("schtasks /Run"))
-  ),
-  status: run("schtasks", "/Query", "/TN", "forkyard", "/V", "/FO", "LIST").pipe(Effect.asVoid)
-}
-
-const manager = (): ServiceManager => {
-  if (osName() === "darwin") return launchd
-  if (osName() === "windows") return taskScheduler
-  return systemd
-}
+const manager = (): ServiceManager => (osName() === "darwin" ? launchd : systemd)
 
 export const isInstalled = FileSystem.FileSystem.use((fs) => fs.exists(manager().definition)).pipe(Effect.orElseSucceed(() => false))
 

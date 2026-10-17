@@ -7,7 +7,7 @@ import { ForkyardClient } from "../src/Client.ts"
 import { AbsolutePath, InfraName, ownerOfWorktree, ServiceName, type WorktreeId } from "../src/Ids.ts"
 import { defaultHome, runDaemon } from "../src/main-daemon.ts"
 import { packageVersion, protocolVersion } from "../src/Package.ts"
-import { layer as osLayer, Os } from "../src/platform/Os.ts"
+import { layer as osLayer, Os, unsupportedHere } from "../src/platform/Os.ts"
 import { attach as attachTui, type View } from "../tui/Attach.ts"
 import * as Service from "./service.ts"
 import { type EnvVar, isSettled, runOf, serviceUrl, type Snapshot, stateDetail, stateLabel, type WorktreeView } from "../src/Model.ts"
@@ -30,7 +30,7 @@ const client = Layer.unwrap(
     const os = yield* Os
     const socket = os.ipcPath(home)
 
-    if (os.ipcIsFile && !(yield* fs.exists(socket))) return yield* Effect.fail("forkyard is not running. Start it with: forkyard daemon")
+    if (!(yield* fs.exists(socket))) return yield* Effect.fail("forkyard is not running. Start it with: forkyard daemon")
     return Layer.provideMerge(Layer.effectDiscard(requireCompatibleDaemon), ForkyardClient.layer(socket))
   })
 )
@@ -236,4 +236,11 @@ const forkyard = Command.make("forkyard").pipe(
   Command.withSubcommands([daemon, up, down, status, env, logs, attach, infraCommand, service, update])
 )
 
-forkyard.pipe(Command.run({ version: "0.1.0" }), Effect.provide(NodeServices.layer), Effect.provide(osLayer), NodeRuntime.runMain)
+const unsupported = unsupportedHere()
+
+if (unsupported) {
+  console.error(unsupported)
+  process.exitCode = 1
+} else {
+  forkyard.pipe(Command.run({ version: "0.1.0" }), Effect.provide(NodeServices.layer), Effect.provide(osLayer), NodeRuntime.runMain)
+}

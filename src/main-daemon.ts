@@ -42,7 +42,7 @@ const prepareHome = Effect.fn("prepareHome")(function* (home: string) {
   const os = yield* Os
 
   yield* fs.makeDirectory(path.join(home, "traefik"), { recursive: true })
-  if (os.ipcIsFile) yield* fs.remove(os.ipcPath(home), { force: true })
+  yield* fs.remove(os.ipcPath(home), { force: true })
 })
 
 const localhostResolves = Effect.tryPromise(() => lookup("forkyard-probe.localhost")).pipe(

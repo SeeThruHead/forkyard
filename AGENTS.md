@@ -8,6 +8,10 @@ Never add AI or agent attribution to anything in this repository: no co-author t
 
 `just` lists everything. `just setup` installs dependencies and git hooks, `just check` runs format, lint, typecheck and tests, `just daemon` runs forkyard, `just tour` runs the example tour. Each recipe calls a package script, so there is one definition of each command.
 
+## Platforms
+
+macOS and Linux. Windows is supported through WSL, which is Linux; native Windows stops at startup with a pointer to WSL. Everything that differs between operating systems lives in `src/platform/Os.ts` as one service with a layer per OS.
+
 ## What the linter enforces
 
 `pnpm run lint` runs oxlint with the project rules in `lint/forkyard.js`:
