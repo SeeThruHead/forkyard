@@ -5,7 +5,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { ForkyardClient } from "../src/Client.ts"
 import { AbsolutePath, InfraName, ownerOfWorktree, ServiceName, type WorktreeId } from "../src/Ids.ts"
 import { defaultHome, runDaemon } from "../src/main-daemon.ts"
-import { attach as attachTui } from "../tui/Attach.ts"
+import { attach as attachTui, type View } from "../tui/Attach.ts"
 import { type EnvVar, isSettled, runOf, serviceUrl, type Snapshot, stateDetail, stateLabel, type WorktreeView } from "../src/Model.ts"
 
 const home = process.env.FORKYARD_HOME ?? defaultHome
@@ -31,15 +31,27 @@ const findRoot = Effect.fn("findRoot")(function* (dir: string): Effect.fn.Return
   return yield* findRoot(parent)
 })
 
-const gitBranch = Effect.fn("gitBranch")(function* (root: string) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-  const path = yield* Path.Path
-  const branch = yield* spawner.string(ChildProcess.make("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: root })).pipe(
-    Effect.map((out) => out.trim()),
+const firstLine = (output: string) => output.trim().split(/[\n,]/)[0]?.trim() ?? ""
+
+const askVcs = (root: string, command: string, args: ReadonlyArray<string>) =>
+  ChildProcessSpawner.ChildProcessSpawner.use((spawner) => spawner.string(ChildProcess.make(command, [...args], { cwd: root }))).pipe(
+    Effect.map(firstLine),
     Effect.orElseSucceed(() => "")
   )
 
-  return branch && branch !== "HEAD" ? branch : path.basename(root)
+const jjBookmark = (root: string) =>
+  askVcs(root, "jj", ["log", "-r", "heads(::@ & bookmarks())", "--no-graph", "-T", 'local_bookmarks.map(|b| b.name()).join(",") ++ "\\n"'])
+
+const gitBranch = (root: string) =>
+  askVcs(root, "git", ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(Effect.map((branch) => (branch === "HEAD" ? "" : branch)))
+
+const branchOf = Effect.fn("branchOf")(function* (root: string) {
+  const path = yield* Path.Path
+  const jj = yield* jjBookmark(root)
+  if (jj) return jj
+  const git = yield* gitBranch(root)
+  if (git) return git
+  return path.basename(root)
 })
 
 const describe = (worktree: WorktreeView) => {
@@ -56,7 +68,7 @@ const describe = (worktree: WorktreeView) => {
 
 const target = Effect.fn("target")(function* (branch: Option.Option<string>) {
   const root = yield* findRoot(process.cwd())
-  const name = Option.isSome(branch) ? branch.value : yield* gitBranch(root)
+  const name = Option.isSome(branch) ? branch.value : yield* branchOf(root)
 
   return { root, branch: name }
 })
@@ -167,15 +179,27 @@ const infraCommand = Command.make("infra", { infra: infraArgument, action: actio
   }).pipe(Effect.scoped, Effect.provide(client))
 ).pipe(Command.withDescription("Run an action on this worktree's infra, e.g. forkyard infra postgres refresh-golden"))
 
+const startTarget = Effect.fn("startTarget")(function* () {
+  const root = yield* findRoot(process.cwd()).pipe(Effect.option)
+  if (Option.isNone(root)) return undefined
+  return { root: root.value, branch: yield* branchOf(root.value) }
+})
+
+const startingView = (id: WorktreeId | undefined, checkout: { readonly root: AbsolutePath; readonly branch: string } | undefined): View => {
+  if (id) return { _tag: "Worktree", id }
+  if (checkout) return { _tag: "Checkout", ...checkout }
+  return { _tag: "Home" }
+}
+
 const attach = Command.make("attach", {}, () =>
   Effect.gen(function* () {
-    const root = yield* findRoot(process.cwd()).pipe(Effect.option)
+    const checkout = yield* startTarget()
     const worktrees = Object.values(yield* snapshot)
-    const here = worktrees.find((worktree) => Option.isSome(root) && worktree.root === root.value)
+    const here = worktrees.find((worktree) => worktree.root === checkout?.root)
 
-    yield* attachTui(yield* Effect.context<ForkyardClient>(), here?.id)
+    yield* attachTui(yield* Effect.context<ForkyardClient>(), startingView(here?.id, checkout))
   }).pipe(Effect.scoped, Effect.provide(client))
-).pipe(Command.withDescription("Open the terminal UI: every worktree, then each one's services, logs, env and restarts"))
+).pipe(Command.withDescription("Open the terminal UI on this checkout's worktree, or on every worktree when run elsewhere"))
 
 const forkyard = Command.make("forkyard").pipe(Command.withSubcommands([daemon, up, down, status, env, logs, attach, infraCommand]))
 
