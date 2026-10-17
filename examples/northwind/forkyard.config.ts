@@ -1,5 +1,6 @@
 import { Env, Infra, logLine, make, Nats, node, Postgres, Process, profile, Redis, Service, Temporal, url, watch } from "forkyard"
 import { Effect } from "effect"
+import { secretsStore } from "./forkyard/secrets.ts"
 
 const schema = (file: string) => [Env.varlock({ schema: file })]
 
@@ -154,7 +155,7 @@ export default make(
       health: "/public/health",
       uses: [postgres, redis, nats, temporal, flags, catalog],
       after: [migrate, natsSetup],
-      envFrom: schema("env/.env.core-api.schema"),
+      envFrom: [...schema("env/.env.core-api.schema"), secretsStore({ secret: "dev/northwind/core-api", pick: ["FLAGS_SDK_KEY"] })],
       env: {
         API_URL: coreApiUrl,
         PORTAL_URL: portalUrl,

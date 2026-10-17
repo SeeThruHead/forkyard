@@ -22,6 +22,7 @@
     "examples/*/forkyard.config.ts",
     "examples/storefront/apps/reports/src",
     "examples/dispatch/apps/api/src",
+    "examples/northwind/forkyard",
     "examples/dispatch/apps/gateway/src",
     "examples/dispatch/apps/workers/src",
     "examples/dispatch/apps/scheduler/src",
