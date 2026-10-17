@@ -1,6 +1,7 @@
 import { NodeRuntime } from "@effect/platform-node"
 import { supplyConfigImports } from "./ConfigImports.ts"
-import { dashboardDir, defaultHome } from "./Package.ts"
+import { Upgrade } from "./Upgrade.ts"
+import { dashboardDir, defaultHome, packageVersion } from "./Package.ts"
 import { Config, Effect, FileSystem, Layer, Path } from "effect"
 import { availableParallelism } from "node:os"
 import * as Daemon from "./Daemon.ts"
@@ -14,6 +15,7 @@ const settings = Config.all({
   httpPort: Config.Port("FORKYARD_HTTP_PORT").pipe(Config.withDefault(4949)),
   maplePort: Config.Port("FORKYARD_MAPLE_PORT").pipe(Config.withDefault(14418)),
   startupConcurrency: Config.Int("FORKYARD_STARTUP_CONCURRENCY").pipe(Config.withDefault(availableParallelism())),
+  supervised: Config.Boolean("FORKYARD_SUPERVISED").pipe(Config.withDefault(false)),
   upstreamHost: Config.String("FORKYARD_UPSTREAM_HOST").pipe(Config.withDefault("host.docker.internal")),
   dashboardDir: Config.String("FORKYARD_DASHBOARD_DIR").pipe(Config.withDefault(dashboardDir))
 })
@@ -43,7 +45,7 @@ const optionsFor = (home: string, path: Path.Path, config: Settings): Daemon.Dae
   maplePort: Port.make(config.maplePort),
   dashboardDir: config.dashboardDir,
   domain: "localhost",
-  version: "0.1.0",
+  version: packageVersion,
   startupConcurrency: config.startupConcurrency
 })
 
@@ -55,7 +57,14 @@ export const runDaemon = Effect.fn("runDaemon")(function* (home: string) {
   yield* survivePipeClose
   yield* prepareHome(home)
 
-  return yield* Layer.launch(Daemon.layer(optionsFor(home, path, config)))
+  const upgrade = Upgrade.layer({ supervised: config.supervised })
+  const daemon = Daemon.layer(optionsFor(home, path, config)).pipe(Layer.provideMerge(upgrade))
+
+  return yield* Effect.scoped(
+    Layer.build(daemon).pipe(
+      Effect.flatMap((services) => Upgrade.use((upgrade) => upgrade.restartRequested).pipe(Effect.provide(services)))
+    )
+  )
 }, Effect.provide(Platform.layer))
 
 if (import.meta.main) runDaemon(process.argv[2] ?? defaultHome).pipe(NodeRuntime.runMain)

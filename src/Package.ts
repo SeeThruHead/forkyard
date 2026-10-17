@@ -24,7 +24,7 @@ export const packageVersion: string = JSON.parse(readFileSync(join(packageRoot, 
 
 export const fromPackage = (...parts: ReadonlyArray<string>) => join(packageRoot, ...parts)
 
-const isSourceCheckout = existsSync(join(packageRoot, ".git"))
+export const isSourceCheckout = existsSync(join(packageRoot, ".git"))
 
 export const defaultHome = isSourceCheckout ? fromPackage("run") : join(homedir(), ".forkyard")
 

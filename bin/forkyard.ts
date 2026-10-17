@@ -8,6 +8,7 @@ import { AbsolutePath, InfraName, ownerOfWorktree, ServiceName, type WorktreeId 
 import { defaultHome, runDaemon } from "../src/main-daemon.ts"
 import { packageVersion, protocolVersion } from "../src/Package.ts"
 import { attach as attachTui, type View } from "../tui/Attach.ts"
+import * as Service from "./service.ts"
 import { type EnvVar, isSettled, runOf, serviceUrl, type Snapshot, stateDetail, stateLabel, type WorktreeView } from "../src/Model.ts"
 
 const home = process.env.FORKYARD_HOME ?? defaultHome
@@ -215,6 +216,23 @@ const attach = Command.make("attach", {}, () =>
   }).pipe(Effect.scoped, Effect.provide(client))
 ).pipe(Command.withDescription("Open the terminal UI on this checkout's worktree, or on every worktree when run elsewhere"))
 
-const forkyard = Command.make("forkyard").pipe(Command.withSubcommands([daemon, up, down, status, env, logs, attach, infraCommand]))
+const serviceInstall = Command.make("install", {}, () => Service.install(home)).pipe(
+  Command.withDescription("Run the daemon as a login service (launchd on macOS, systemd on Linux and WSL)")
+)
+const serviceUninstall = Command.make("uninstall", {}, () => Service.uninstall).pipe(Command.withDescription("Remove the daemon service"))
+const serviceRestart = Command.make("restart", {}, () => Service.restart).pipe(Command.withDescription("Restart the daemon service"))
+const serviceStatus = Command.make("status", {}, () => Service.status).pipe(Command.withDescription("Show the daemon service's state"))
+const service = Command.make("service").pipe(
+  Command.withSubcommands([serviceInstall, serviceUninstall, serviceRestart, serviceStatus]),
+  Command.withDescription("Manage the daemon as a background service")
+)
+
+const update = Command.make("update", {}, () => Service.update).pipe(
+  Command.withDescription("Update forkyard, the menu bar app if installed with brew, and the running daemon")
+)
+
+const forkyard = Command.make("forkyard").pipe(
+  Command.withSubcommands([daemon, up, down, status, env, logs, attach, infraCommand, service, update])
+)
 
 forkyard.pipe(Command.run({ version: "0.1.0" }), Effect.provide(NodeServices.layer), NodeRuntime.runMain)

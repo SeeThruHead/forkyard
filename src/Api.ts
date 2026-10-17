@@ -1,6 +1,7 @@
 import { Effect, Path, Record, Stream } from "effect"
 import { DaemonLog } from "./DaemonLog.ts"
 import { cliPath, packageVersion, protocolVersion } from "./Package.ts"
+import { Upgrade } from "./Upgrade.ts"
 import { ProcessUsage } from "./Usage.ts"
 import { EnvResolver } from "./Env.ts"
 import { AbsolutePath, ownerOfWorktree, type RunId } from "./Ids.ts"
@@ -25,6 +26,7 @@ export const layer = (options: { readonly dashboardUrl: string }) =>
       const path = yield* Path.Path
       const daemonLog = yield* DaemonLog
       const usage = yield* ProcessUsage
+      const upgrade = yield* Upgrade
 
       const runLogSource = Effect.fn("Api.runLog")(function* (runId: RunId) {
         const history = yield* runs.lines(runId)
@@ -67,7 +69,16 @@ export const layer = (options: { readonly dashboardUrl: string }) =>
         Infra: () => infra.running,
         DaemonLogs: () => daemonLog.lines,
         Usage: () => usage.changes,
-        Info: () => Effect.succeed({ cli: cliPath, dashboard: options.dashboardUrl, version: packageVersion, protocol: protocolVersion }),
+        Info: () =>
+          upgrade.pending.pipe(
+            Effect.map((pending) => ({
+              cli: cliPath,
+              dashboard: options.dashboardUrl,
+              version: packageVersion,
+              protocol: protocolVersion,
+              ...(pending ? { pendingVersion: pending } : {})
+            }))
+          ),
         InfraAction: ({ id, infra: name, action }) =>
           supervisor.infraAction(id, name, action).pipe(Effect.mapError((error) => new ForkyardError({ message: error.message })))
       })

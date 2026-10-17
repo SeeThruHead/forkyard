@@ -96,7 +96,8 @@ export const DaemonInfo = Schema.Struct({
   cli: Schema.String,
   dashboard: Schema.String,
   version: Schema.optional(Schema.String),
-  protocol: Schema.optional(Schema.Int)
+  protocol: Schema.optional(Schema.Int),
+  pendingVersion: Schema.optional(Schema.String)
 })
 export type DaemonInfo = typeof DaemonInfo.Type
 
