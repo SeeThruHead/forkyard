@@ -1,5 +1,5 @@
 import { NodeHttpPlatform, NodeHttpServer, NodeSocketServer } from "@effect/platform-node"
-import { Effect, Layer, References } from "effect"
+import { Effect, FileSystem, Layer, Option, References } from "effect"
 import {
   Etag,
   FetchHttpClient,
@@ -22,13 +22,14 @@ import * as Platform from "./Platform.ts"
 import { Proc } from "./Proc.ts"
 import { ForkyardRpcs } from "./Protocol.ts"
 import * as Proxy from "./Proxy.ts"
+import { ProxyAddress } from "./ProxyAddress.ts"
 import { Registry } from "./Registry.ts"
 import { Router } from "./Router.ts"
 import { Runs } from "./Runs.ts"
 import { Status } from "./Status.ts"
 import * as Store from "./Store.ts"
 import { Supervisor } from "./Supervisor.ts"
-import { Maple, observability, type TelemetryTarget } from "./Telemetry.ts"
+import { observability, type TelemetryTarget } from "./Telemetry.ts"
 import { Worktrees } from "./Worktrees.ts"
 
 export type DaemonOptions = {
@@ -36,27 +37,29 @@ export type DaemonOptions = {
   readonly stateFile: string
   readonly traefikDir: string
   readonly upstreamHost: string
-  readonly proxyPort: Port
+  readonly proxyPort: Option.Option<Port>
   readonly httpPort: Port
-  readonly maplePort: Port
+  readonly httpPortFile: string
   readonly dashboardDir: string
   readonly domain: string
   readonly version: string
   readonly startupConcurrency: number
   readonly proxyMode: "docker" | "binary"
-  readonly telemetry: TelemetryTarget
+  readonly telemetry: TelemetryTarget | undefined
   readonly hostsFile: string | undefined
 }
 
 const forwardTelemetry = Effect.fn("Daemon.forwardTelemetry")(
-  function* (otlpUrl: string) {
+  function* ({ url, headers }: TelemetryTarget) {
     const http = yield* HttpClient.HttpClient
     const request = yield* HttpServerRequest.HttpServerRequest
     const body = new Uint8Array(yield* request.arrayBuffer)
-    const target = `${otlpUrl}${request.url.replace(/^\/otlp/, "")}`
+    const target = `${url}${request.url.replace(/^\/otlp/, "")}`
     const contentType = request.headers["content-type"] ?? "application/json"
 
-    const response = yield* http.execute(HttpClientRequest.post(target).pipe(HttpClientRequest.bodyUint8Array(body, contentType)))
+    const response = yield* http.execute(
+      HttpClientRequest.post(target).pipe(HttpClientRequest.setHeaders(headers), HttpClientRequest.bodyUint8Array(body, contentType))
+    )
 
     return HttpServerResponse.empty({ status: response.status })
   },
@@ -64,11 +67,11 @@ const forwardTelemetry = Effect.fn("Daemon.forwardTelemetry")(
   Effect.withTracerEnabled(false)
 )
 
-const otlpProxy = (otlpUrl: string) =>
+const otlpProxy = (target: TelemetryTarget) =>
   HttpRouter.use((router) =>
     Effect.gen(function* () {
       const http = yield* HttpClient.HttpClient
-      yield* router.add("POST", "/otlp/*", forwardTelemetry(otlpUrl).pipe(Effect.provideService(HttpClient.HttpClient, http)))
+      yield* router.add("POST", "/otlp/*", forwardTelemetry(target).pipe(Effect.provideService(HttpClient.HttpClient, http)))
     })
   )
 
@@ -90,12 +93,12 @@ const dashboardOnly = (allowedOrigins: ReadonlyArray<string>) =>
     { global: true }
   )
 
-const dashboardServer = (options: DaemonOptions, otlpUrl: string | undefined, dashboardUrl: string) =>
+const dashboardServer = (options: DaemonOptions, dashboardUrl: string) =>
   HttpRouter.serve(
     Layer.mergeAll(
       dashboardOnly([dashboardUrl, `http://127.0.0.1:${options.httpPort}`, `http://localhost:${options.httpPort}`]),
       RpcServer.layer(ForkyardRpcs).pipe(Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" }))),
-      otlpUrl ? otlpProxy(otlpUrl) : Layer.empty,
+      options.telemetry ? otlpProxy(options.telemetry) : Layer.empty,
       HttpStaticServer.layer({ root: options.dashboardDir, spa: true, cacheControl: "no-store" })
     ),
     { disableLogger: true }
@@ -106,6 +109,17 @@ const dashboardServer = (options: DaemonOptions, otlpUrl: string | undefined, da
     Layer.provide(Etag.layer)
   )
 
+const advertiseHttpPort = (options: DaemonOptions) =>
+  Layer.effectDiscard(
+    FileSystem.FileSystem.pipe(
+      Effect.flatMap((fs) =>
+        Effect.acquireRelease(fs.writeFileString(options.httpPortFile, `${options.httpPort}\n`), () =>
+          fs.remove(options.httpPortFile, { force: true }).pipe(Effect.ignore)
+        )
+      )
+    )
+  )
+
 const cliServer = (options: DaemonOptions) =>
   RpcServer.layer(ForkyardRpcs).pipe(
     Layer.provide(RpcServer.layerProtocolSocketServer),
@@ -114,31 +128,19 @@ const cliServer = (options: DaemonOptions) =>
     Layer.provide(Layer.succeed(References.UnhandledLogLevel, "Debug"))
   )
 
-const otlpUrlOf = (options: DaemonOptions) => {
-  if (options.telemetry._tag === "Off") return undefined
-  if (options.telemetry._tag === "Remote") return options.telemetry.url
-  return `http://127.0.0.1:${options.maplePort}`
-}
+const otlpHeadersOf = (telemetry: TelemetryTarget | undefined) =>
+  Object.entries(telemetry?.headers ?? {})
+    .map(([key, value]) => `${key}=${value}`)
+    .join(",")
 
-const otlpHeadersOf = (options: DaemonOptions) =>
-  options.telemetry._tag === "Remote"
-    ? Object.entries(options.telemetry.headers)
-        .map(([key, value]) => `${key}=${value}`)
-        .join(",")
-    : ""
-
-const telemetryLayer = (options: DaemonOptions, otlpUrl: string | undefined) => {
-  const resource = { serviceVersion: options.version, attributes: { "service.namespace": "forkyard" } }
-  if (!otlpUrl) return Layer.empty
-  if (options.telemetry._tag === "Remote") return observability(otlpUrl, options.telemetry.headers, resource)
-  return observability(otlpUrl, {}, resource).pipe(
-    Layer.provideMerge(Maple.layer({ port: options.maplePort, host: `maple.${options.domain}`, proxyPort: options.proxyPort }))
-  )
-}
+const telemetryLayer = (options: DaemonOptions) =>
+  options.telemetry
+    ? observability(options.telemetry, { serviceVersion: options.version, attributes: { "service.namespace": "forkyard" } })
+    : Layer.empty
 
 export const layer = (options: DaemonOptions) => {
-  const dashboardUrl = `http://forkyard.${options.domain}${options.proxyPort === 80 ? "" : `:${options.proxyPort}`}`
-  const otlpUrl = otlpUrlOf(options)
+  const dashboardHost = `forkyard.${options.domain}`
+  const otlpUrl = options.telemetry?.url
 
   const records = Layer.mergeAll(
     Status.layer,
@@ -150,35 +152,41 @@ export const layer = (options: DaemonOptions) => {
 
   const processes = Proc.layer({ otlpUrl }).pipe(Layer.provideMerge(records))
 
-  const telemetry = telemetryLayer(options, otlpUrl)
+  const telemetry = telemetryLayer(options)
 
-  const worktrees = Worktrees.layer({ domain: options.domain, proxyPort: options.proxyPort }).pipe(
-    Layer.provideMerge(Supervisor.layer({ startupConcurrency: options.startupConcurrency, otlpUrl, otlpHeaders: otlpHeadersOf(options) })),
+  const proxy = Proxy.layer({
+    mode: options.proxyMode,
+    traefikDir: options.traefikDir,
+    port: options.proxyPort,
+    dashboardHost,
+    dashboardPort: options.httpPort
+  }).pipe(Layer.provideMerge(processes))
+
+  const worktrees = Worktrees.layer({ domain: options.domain }).pipe(
+    Layer.provideMerge(
+      Supervisor.layer({ startupConcurrency: options.startupConcurrency, otlpUrl, otlpHeaders: otlpHeadersOf(options.telemetry) })
+    ),
     Layer.provideMerge(EnvResolver.layer),
-    Layer.provideMerge(InfraManager.layer({ domain: options.domain, proxyPort: options.proxyPort }))
+    Layer.provideMerge(InfraManager.layer({ domain: options.domain }))
   )
 
-  const announce = Layer.effectDiscard(Effect.logInfo(`forkyard on ${options.socket}, dashboard at ${dashboardUrl}`))
-
-  const servers = Layer.mergeAll(
-    announce,
-    cliServer(options),
-    dashboardServer(options, otlpUrl, dashboardUrl),
-    Proxy.layer({
-      mode: options.proxyMode,
-      traefikDir: options.traefikDir,
-      port: options.proxyPort,
-      dashboardHost: `forkyard.${options.domain}`,
-      dashboardPort: options.httpPort
+  const servers = Layer.unwrap(
+    ProxyAddress.useSync((address) => {
+      const dashboardUrl = address.url(dashboardHost)
+      return Layer.mergeAll(
+        Layer.effectDiscard(Effect.logInfo(`forkyard on ${options.socket}, dashboard at ${dashboardUrl}`)),
+        cliServer(options),
+        dashboardServer(options, dashboardUrl),
+        advertiseHttpPort(options)
+      ).pipe(Layer.provide(Api.layer({ dashboardUrl })))
     })
   )
 
   return servers.pipe(
-    Layer.provide(Api.layer({ dashboardUrl })),
     Layer.provide(ProcessUsage.layer),
     Layer.provideMerge(worktrees),
     Layer.provide(telemetry),
-    Layer.provideMerge(processes),
+    Layer.provideMerge(proxy),
     Layer.provide(DaemonLog.logging)
   )
 }

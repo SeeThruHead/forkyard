@@ -18,11 +18,6 @@ Atom.runtime.addGlobalLayer(
   }).pipe(Layer.provide(OtlpSerialization.layerJson), Layer.provide(FetchHttpClient.layer))
 )
 
-export const mapleUrl = `${location.protocol}//${location.host.replace(/^forkyard\./, "maple.")}`
-
-export const mapleLink = (view: "traces" | "logs", query: Readonly<Record<string, string>>) =>
-  `${mapleUrl}/#/${view}?${new URLSearchParams(query).toString()}`
-
 export class Forkyard extends AtomRpc.Service<Forkyard>()("Forkyard", {
   group: ForkyardRpcs,
   protocol: RpcClient.layerProtocolSocket({ retryTransientErrors: true }).pipe(

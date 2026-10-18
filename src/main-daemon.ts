@@ -6,7 +6,8 @@ import { ForkyardError } from "./Protocol.ts"
 import { parseHeaders, type TelemetryTarget } from "./Telemetry.ts"
 import { Os } from "./platform/Os.ts"
 import { Upgrade } from "./Upgrade.ts"
-import { dashboardDir, defaultHome, packageVersion } from "./Package.ts"
+import { dashboardDir, defaultHome, httpPortFile, packageVersion } from "./Package.ts"
+import { allocatePort } from "./Ports.ts"
 import { Config, Effect, FileSystem, Layer, Option, Path } from "effect"
 import { availableParallelism } from "node:os"
 import * as Daemon from "./Daemon.ts"
@@ -16,14 +17,12 @@ import * as Platform from "./Platform.ts"
 export { defaultHome }
 
 const settings = Config.all({
-  proxyPort: Config.Port("FORKYARD_PROXY_PORT").pipe(Config.withDefault(80)),
-  httpPort: Config.Port("FORKYARD_HTTP_PORT").pipe(Config.withDefault(4949)),
-  maplePort: Config.Port("FORKYARD_MAPLE_PORT").pipe(Config.withDefault(14418)),
+  proxyPort: Config.Port("FORKYARD_PROXY_PORT").pipe(Config.option),
+  httpPort: Config.Port("FORKYARD_HTTP_PORT").pipe(Config.option),
   startupConcurrency: Config.Int("FORKYARD_STARTUP_CONCURRENCY").pipe(Config.withDefault(availableParallelism())),
   supervised: Config.Boolean("FORKYARD_SUPERVISED").pipe(Config.withDefault(false)),
   upstreamHost: Config.String("FORKYARD_UPSTREAM_HOST").pipe(Config.option),
   proxyMode: Config.Literals(["docker", "binary"], "FORKYARD_PROXY").pipe(Config.withDefault("docker" as const)),
-  telemetry: Config.Boolean("FORKYARD_TELEMETRY").pipe(Config.withDefault(true)),
   otlpUrl: Config.String("FORKYARD_OTLP_URL").pipe(Config.option),
   otlpHeaders: Config.String("FORKYARD_OTLP_HEADERS").pipe(Config.withDefault("")),
   hostsFile: Config.String("FORKYARD_HOSTS_FILE").pipe(Config.option),
@@ -82,18 +81,19 @@ const chooseHostsFile = Effect.fn("chooseHostsFile")(function* (configured: Opti
 
 const defaultUpstream = (mode: "docker" | "binary", os: Os["Service"]) => (mode === "binary" ? "127.0.0.1" : os.dockerUpstream)
 
-const telemetryTarget = (config: Settings): TelemetryTarget => {
-  if (!config.telemetry) return { _tag: "Off" }
-  if (Option.isSome(config.otlpUrl)) return { _tag: "Remote", url: config.otlpUrl.value, headers: parseHeaders(config.otlpHeaders) }
-  return { _tag: "Local" }
-}
+const telemetryTarget = (config: Settings): TelemetryTarget | undefined =>
+  Option.match(config.otlpUrl, {
+    onNone: () => undefined,
+    onSome: (url) => ({ url, headers: parseHeaders(config.otlpHeaders) })
+  })
 
 const optionsFor = (
   home: string,
   path: Path.Path,
   os: Os["Service"],
   config: Settings,
-  hostsFile: string | undefined
+  hostsFile: string | undefined,
+  httpPort: Port
 ): Daemon.DaemonOptions => ({
   hostsFile,
   socket: os.ipcPath(home),
@@ -102,9 +102,9 @@ const optionsFor = (
   upstreamHost: Option.getOrElse(config.upstreamHost, () => defaultUpstream(config.proxyMode, os)),
   proxyMode: config.proxyMode,
   telemetry: telemetryTarget(config),
-  proxyPort: Port.make(config.proxyPort),
-  httpPort: Port.make(config.httpPort),
-  maplePort: Port.make(config.maplePort),
+  proxyPort: Option.map(config.proxyPort, (port) => Port.make(port)),
+  httpPort,
+  httpPortFile: httpPortFile(home),
   dashboardDir: config.dashboardDir,
   domain: "localhost",
   version: packageVersion,
@@ -119,7 +119,8 @@ export const runDaemon = Effect.fn("runDaemon")(function* (home: string) {
   yield* prepareHome(home)
 
   const upgrade = Upgrade.layer({ supervised: config.supervised })
-  const daemon = Daemon.layer(optionsFor(home, path, yield* Os, config, yield* chooseHostsFile(config.hostsFile))).pipe(
+  const httpPort = yield* Option.match(config.httpPort, { onNone: () => allocatePort, onSome: (port) => Effect.succeed(Port.make(port)) })
+  const daemon = Daemon.layer(optionsFor(home, path, yield* Os, config, yield* chooseHostsFile(config.hostsFile), httpPort)).pipe(
     Layer.provideMerge(upgrade)
   )
 

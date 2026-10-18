@@ -1,5 +1,5 @@
 import { Effect, Predicate, Schema } from "effect"
-import { createServer } from "node:net"
+import { connect, createServer } from "node:net"
 import { Port } from "./Ids.ts"
 
 export class PortError extends Schema.TaggedError<PortError>()("PortError", {
@@ -18,9 +18,22 @@ export const allocatePort = Effect.callback<Port, PortError>((resume) => {
   })
 })
 
-export const takenOnLoopback = (port: number) =>
+const answersOnLoopback = (port: number) =>
+  Effect.callback<boolean>((resume) => {
+    const socket = connect({ port, host: "127.0.0.1" })
+    socket.once("connect", () => {
+      socket.destroy()
+      resume(Effect.succeed(true))
+    })
+    socket.once("error", () => resume(Effect.succeed(false)))
+  })
+
+const bindRefused = (port: number) =>
   Effect.callback<boolean>((resume) => {
     const server = createServer()
     server.once("error", (error: NodeJS.ErrnoException) => resume(Effect.succeed(error.code === "EADDRINUSE")))
     server.listen(port, "127.0.0.1", () => server.close(() => resume(Effect.succeed(false))))
   })
+
+export const takenOnLoopback = (port: number) =>
+  answersOnLoopback(port).pipe(Effect.flatMap((answers) => (answers ? Effect.succeed(true) : bindRefused(port))))

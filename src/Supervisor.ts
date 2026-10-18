@@ -11,7 +11,6 @@ import {
   Metric,
   Path,
   PubSub,
-  Schedule,
   Schema,
   Ref,
   Semaphore,
@@ -27,6 +26,7 @@ import type { RunRef, ServiceState, ServiceView } from "./Model.ts"
 import { plan } from "./Plan.ts"
 import { allocatePort } from "./Ports.ts"
 import { Proc, type Spawned } from "./Proc.ts"
+import { pollUntilReady } from "./Readiness.ts"
 import { Router } from "./Router.ts"
 import {
   hostOf,
@@ -194,8 +194,7 @@ export class Supervisor extends Context.Service<
 
         const waitHealthy = (port: Port, path: string) =>
           http.get(`http://127.0.0.1:${port}${path}`).pipe(
-            Effect.timeout("2 seconds"),
-            Effect.retry(Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "60 seconds" }))),
+            (check) => pollUntilReady(check, { every: "100 millis", within: "60 seconds" }),
             Effect.mapError((error) => new NeverHealthy({ message: `${path} was not healthy within 60 seconds: ${lastAnswer(error)}` })),
             Effect.asVoid,
             Effect.withSpan("Supervisor.waitHealthy", { attributes: { "server.port": port, "url.path": path } })
@@ -203,8 +202,7 @@ export class Supervisor extends Context.Service<
 
         const waitRouted = (base: string, path: string) =>
           http.get(`${base}${path}`).pipe(
-            Effect.timeout("2 seconds"),
-            Effect.retry(Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "10 seconds" }))),
+            (check) => pollUntilReady(check, { every: "100 millis", within: "10 seconds" }),
             Effect.asVoid,
             Effect.catch(() => Effect.logWarning(`${base} is healthy but not reachable through the proxy yet`)),
             Effect.withSpan("Supervisor.waitRouted", { attributes: { "url.full": `${base}${path}` } })

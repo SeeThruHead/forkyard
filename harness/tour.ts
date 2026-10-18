@@ -493,100 +493,105 @@ const program = Effect.gen(function* () {
   const previous = yield* forkyard.RunLog({ runId: runs[1]!.id }).pipe(Stream.runCollect)
   yield* check("previous run's log still readable", runs.length >= 2 && previous.length > 0, `run #${runs[1]?.n}: ${previous.length} lines`)
 
-  yield* step("12. telemetry: everything above landed in Maple")
-  const mapleUrl = `http://127.0.0.1:${process.env.FORKYARD_MAPLE_PORT ?? "14418"}`
-  yield* Effect.tryPromise(() => fetch(url("shop", "feat-gift-cards.storefront")).then((response) => response.text()))
-  yield* Effect.tryPromise(() => fetch(`${url("reports", "feat-gift-cards.storefront")}/sales`).then((response) => response.text()))
-  const query = (sql: string) =>
-    Effect.tryPromise(() =>
-      fetch(`${mapleUrl}/local/query`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sql })
-      }).then((response) => response.json() as Promise<ReadonlyArray<Record<string, unknown>>>)
+  const telemetryChecks = Effect.fnUntraced(function* (mapleUrl: string) {
+    yield* step("12. telemetry: everything above landed in Maple")
+    yield* Effect.tryPromise(() => fetch(url("shop", "feat-gift-cards.storefront")).then((response) => response.text()))
+    yield* Effect.tryPromise(() => fetch(`${url("reports", "feat-gift-cards.storefront")}/sales`).then((response) => response.text()))
+    const query = (sql: string) =>
+      Effect.tryPromise(() =>
+        fetch(`${mapleUrl}/local/query`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sql })
+        }).then((response) => response.json() as Promise<ReadonlyArray<Record<string, unknown>>>)
+      )
+    const count = (sql: string) => query(sql).pipe(Effect.map((rows) => Number(rows[0]?.n ?? 0)))
+    const eventually = (sql: string) =>
+      count(sql).pipe(
+        Effect.filterOrFail((n) => n > 0),
+        Effect.retry(Schedule.spaced("1 second").pipe(Schedule.upTo({ duration: "25 seconds" }))),
+        Effect.orElseSucceed(() => 0)
+      )
+    const serviceRunTrace = yield* eventually(`
+      SELECT count() AS n FROM (
+        SELECT TraceId FROM traces WHERE ServiceName = 'forkyard'
+        GROUP BY TraceId
+        HAVING countIf(SpanName = 'Supervisor.startService' AND SpanAttributes['forkyard.worktree'] = 'feat-gift-cards.storefront' AND SpanAttributes['forkyard.service'] = 'api') > 0
+          AND countIf(SpanName = 'Env.resolve') > 0
+          AND countIf(SpanName = 'EnvSource.load') > 0
+          AND countIf(SpanName = 'Proc.spawn') > 0
+          AND countIf(SpanName = 'Supervisor.waitHealthy') > 0
+      )`)
+    yield* check(
+      "a service run is one trace: env, spawn, health",
+      serviceRunTrace > 0,
+      `${serviceRunTrace} traces for the api on feat-gift-cards`
     )
-  const count = (sql: string) => query(sql).pipe(Effect.map((rows) => Number(rows[0]?.n ?? 0)))
-  const eventually = (sql: string) =>
-    count(sql).pipe(
-      Effect.filterOrFail((n) => n > 0),
-      Effect.retry(Schedule.spaced("1 second").pipe(Schedule.upTo({ duration: "25 seconds" }))),
-      Effect.orElseSucceed(() => 0)
+    const attributed = yield* count(
+      `SELECT count() AS n FROM traces WHERE ServiceName = 'forkyard' AND SpanAttributes['forkyard.worktree'] = 'feat-gift-cards.storefront'`
     )
-  const serviceRunTrace = yield* eventually(`
-    SELECT count() AS n FROM (
-      SELECT TraceId FROM traces WHERE ServiceName = 'forkyard'
-      GROUP BY TraceId
-      HAVING countIf(SpanName = 'Supervisor.startService' AND SpanAttributes['forkyard.worktree'] = 'feat-gift-cards.storefront' AND SpanAttributes['forkyard.service'] = 'api') > 0
-        AND countIf(SpanName = 'Env.resolve') > 0
-        AND countIf(SpanName = 'EnvSource.load') > 0
-        AND countIf(SpanName = 'Proc.spawn') > 0
-        AND countIf(SpanName = 'Supervisor.waitHealthy') > 0
-    )`)
-  yield* check(
-    "a service run is one trace: env, spawn, health",
-    serviceRunTrace > 0,
-    `${serviceRunTrace} traces for the api on feat-gift-cards`
-  )
-  const attributed = yield* count(
-    `SELECT count() AS n FROM traces WHERE ServiceName = 'forkyard' AND SpanAttributes['forkyard.worktree'] = 'feat-gift-cards.storefront'`
-  )
-  yield* check("daemon spans carry the worktree", attributed > 0, `${attributed} spans for feat-gift-cards.storefront`)
-  const noteLogs = yield* eventually(
-    `SELECT count() AS n FROM logs WHERE ServiceName = 'api' AND ResourceAttributes['service.namespace'] = 'feat-gift-cards.storefront' AND Body LIKE 'order % placed%'`
-  )
-  yield* check("api's output arrived as logs under its branch", noteLogs > 0)
-  const linked = yield* count(
-    `SELECT count() AS n FROM logs WHERE ServiceName = 'api' AND ResourceAttributes['service.namespace'] = 'feat-gift-cards.storefront' AND TraceId != ''`
-  )
-  yield* check("those logs link to the run's trace", linked > 0, `${linked} lines with a trace id`)
-  const distributed = yield* eventually(`
-    SELECT count() AS n FROM (
-      SELECT TraceId FROM traces WHERE ResourceAttributes['service.namespace'] = 'feat-gift-cards.storefront'
-      GROUP BY TraceId
-      HAVING countIf(ServiceName = 'shop') > 0 AND countIf(ServiceName = 'api') > 0 AND countIf(SpanName LIKE 'pg%') > 0
-    )`)
-  yield* check("one trace spans shop, api and Postgres", distributed > 0, `${distributed} traces`)
-  const effectApp = yield* eventually(`
-    SELECT count() AS n FROM (
-      SELECT TraceId FROM traces WHERE ServiceName = 'reports' AND ResourceAttributes['service.namespace'] = 'feat-gift-cards.storefront'
-      GROUP BY TraceId
-      HAVING countIf(SpanName LIKE 'http.server%') > 0 AND countIf(SpanName = 'Sales.byProduct') > 0 AND countIf(SpanName = 'sql.execute') > 0
-    )`)
-  yield* check("the Effect app traces request, service and SQL itself through Otlp.layer", effectApp > 0, `${effectApp} traces`)
-  const ownDatabase = yield* count(
-    `SELECT count() AS n FROM traces WHERE ServiceName = 'api' AND ResourceAttributes['service.namespace'] = 'feat-gift-cards.storefront' AND SpanAttributes['db.name'] = 'storefront_feat_gift_cards'`
-  )
-  const leaked = yield* count(
-    `SELECT count() AS n FROM traces WHERE ResourceAttributes['service.namespace'] != 'feat-gift-cards.storefront' AND SpanAttributes['db.name'] = 'storefront_feat_gift_cards'`
-  )
-  yield* check(
-    "only feat-gift-cards' services touched feat-gift-cards' database",
-    ownDatabase > 0 && leaked === 0,
-    `${ownDatabase} own spans, ${leaked} from other branches`
-  )
-  const starts = yield* eventually(
-    `SELECT count() AS n FROM metrics_sum WHERE ServiceName = 'forkyard' AND MetricName = 'forkyard.process.starts'`
-  )
-  const ready = yield* eventually(
-    `SELECT count() AS n FROM metrics_histogram WHERE ServiceName = 'forkyard' AND MetricName = 'forkyard.service.ready_ms'`
-  )
-  yield* check(
-    "daemon metrics exported",
-    starts > 0 && ready > 0,
-    `forkyard.process.starts ${starts} points, forkyard.service.ready_ms ${ready} points`
-  )
-  const bunLogs = yield* eventually(
-    `SELECT count() AS n FROM logs WHERE ServiceName = 'worker' AND ResourceAttributes['service.namespace'] = 'feat-tags.shortly' AND Body LIKE 'checked link%'`
-  )
-  const pythonLogs = yield* eventually(
-    `SELECT count() AS n FROM logs WHERE ServiceName = 'worker' AND ResourceAttributes['service.namespace'] = 'feat-due-dates.taskboard' AND Body LIKE 'estimated task%'`
-  )
-  yield* check("Bun and Python apps have logs without any OTel SDK", bunLogs > 0 && pythonLogs > 0)
+    yield* check("daemon spans carry the worktree", attributed > 0, `${attributed} spans for feat-gift-cards.storefront`)
+    const noteLogs = yield* eventually(
+      `SELECT count() AS n FROM logs WHERE ServiceName = 'api' AND ResourceAttributes['service.namespace'] = 'feat-gift-cards.storefront' AND Body LIKE 'order % placed%'`
+    )
+    yield* check("api's output arrived as logs under its branch", noteLogs > 0)
+    const linked = yield* count(
+      `SELECT count() AS n FROM logs WHERE ServiceName = 'api' AND ResourceAttributes['service.namespace'] = 'feat-gift-cards.storefront' AND TraceId != ''`
+    )
+    yield* check("those logs link to the run's trace", linked > 0, `${linked} lines with a trace id`)
+    const distributed = yield* eventually(`
+      SELECT count() AS n FROM (
+        SELECT TraceId FROM traces WHERE ResourceAttributes['service.namespace'] = 'feat-gift-cards.storefront'
+        GROUP BY TraceId
+        HAVING countIf(ServiceName = 'shop') > 0 AND countIf(ServiceName = 'api') > 0 AND countIf(SpanName LIKE 'pg%') > 0
+      )`)
+    yield* check("one trace spans shop, api and Postgres", distributed > 0, `${distributed} traces`)
+    const effectApp = yield* eventually(`
+      SELECT count() AS n FROM (
+        SELECT TraceId FROM traces WHERE ServiceName = 'reports' AND ResourceAttributes['service.namespace'] = 'feat-gift-cards.storefront'
+        GROUP BY TraceId
+        HAVING countIf(SpanName LIKE 'http.server%') > 0 AND countIf(SpanName = 'Sales.byProduct') > 0 AND countIf(SpanName = 'sql.execute') > 0
+      )`)
+    yield* check("the Effect app traces request, service and SQL itself through Otlp.layer", effectApp > 0, `${effectApp} traces`)
+    const ownDatabase = yield* count(
+      `SELECT count() AS n FROM traces WHERE ServiceName = 'api' AND ResourceAttributes['service.namespace'] = 'feat-gift-cards.storefront' AND SpanAttributes['db.name'] = 'storefront_feat_gift_cards'`
+    )
+    const leaked = yield* count(
+      `SELECT count() AS n FROM traces WHERE ResourceAttributes['service.namespace'] != 'feat-gift-cards.storefront' AND SpanAttributes['db.name'] = 'storefront_feat_gift_cards'`
+    )
+    yield* check(
+      "only feat-gift-cards' services touched feat-gift-cards' database",
+      ownDatabase > 0 && leaked === 0,
+      `${ownDatabase} own spans, ${leaked} from other branches`
+    )
+    const starts = yield* eventually(
+      `SELECT count() AS n FROM metrics_sum WHERE ServiceName = 'forkyard' AND MetricName = 'forkyard.process.starts'`
+    )
+    const ready = yield* eventually(
+      `SELECT count() AS n FROM metrics_histogram WHERE ServiceName = 'forkyard' AND MetricName = 'forkyard.service.ready_ms'`
+    )
+    yield* check(
+      "daemon metrics exported",
+      starts > 0 && ready > 0,
+      `forkyard.process.starts ${starts} points, forkyard.service.ready_ms ${ready} points`
+    )
+    const bunLogs = yield* eventually(
+      `SELECT count() AS n FROM logs WHERE ServiceName = 'worker' AND ResourceAttributes['service.namespace'] = 'feat-tags.shortly' AND Body LIKE 'checked link%'`
+    )
+    const pythonLogs = yield* eventually(
+      `SELECT count() AS n FROM logs WHERE ServiceName = 'worker' AND ResourceAttributes['service.namespace'] = 'feat-due-dates.taskboard' AND Body LIKE 'estimated task%'`
+    )
+    yield* check("Bun and Python apps have logs without any OTel SDK", bunLogs > 0 && pythonLogs > 0)
+  })
+
+  const mapleUrl = process.env.TOUR_MAPLE_URL
+  if (mapleUrl) yield* telemetryChecks(mapleUrl)
+  else yield* say("12. telemetry: skipped (run the daemon with FORKYARD_OTLP_URL pointing at a Maple and set TOUR_MAPLE_URL to check it)")
 
   const lines = yield* Ref.get(checks)
   const failed = lines.filter((line) => line.startsWith("FAIL")).length
   yield* say(`\n${lines.filter((line) => line.startsWith("ok")).length} checks passed, ${failed} failed`)
-  yield* say(`tour: http://forkyard.localhost/#/tour/1, telemetry: http://maple.localhost`)
+  yield* say("tour: http://forkyard.localhost/#/tour/1")
   yield* fs.writeFileString(path.join(home, "tour-output.txt"), (yield* Ref.get(checks)).join("\n") + "\n")
   if (failed > 0) return yield* Effect.fail(`${failed} checks failed`)
 })

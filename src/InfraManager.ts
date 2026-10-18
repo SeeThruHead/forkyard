@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, RcMap, Ref, Semaphore, type Scope } from "effect"
-import { type InfraName, ownerOfInfra, Pid, type Port } from "./Ids.ts"
+import { type InfraName, ownerOfInfra, Pid } from "./Ids.ts"
+import { ProxyAddress } from "./ProxyAddress.ts"
 import { Proc } from "./Proc.ts"
 import { Router } from "./Router.ts"
 import { type Env, InfraError, type InfraServer, type InfraSpec, type InfraStarted, type InfraTools, type Worktree } from "./Stack.ts"
@@ -46,10 +47,11 @@ export class InfraManager extends Context.Service<
     readonly act: (spec: InfraSpec, server: InfraServer, worktree: Worktree, action: string) => Effect.Effect<string, InfraError>
   }
 >()("forkyard/InfraManager") {
-  static readonly layer = (options: { readonly domain: string; readonly proxyPort: Port }) =>
+  static readonly layer = (options: { readonly domain: string }) =>
     Layer.effect(
       InfraManager,
       Effect.gen(function* () {
+        const proxy = yield* ProxyAddress
         const proc = yield* Proc
         const router = yield* Router
         const requests = yield* Ref.make<Readonly<Record<string, { readonly spec: InfraSpec; readonly origin: Worktree }>>>({})
@@ -57,15 +59,13 @@ export class InfraManager extends Context.Service<
         const hostFor = (name: InfraName, route: string, instance: string) =>
           instance === "shared" ? `${route}.${options.domain}` : `${route}.${instance}.${options.domain}`
 
-        const urlFor = (host: string) => `http://${host}${options.proxyPort === 80 ? "" : `:${options.proxyPort}`}`
-
         const exposeRoutes = (name: InfraName, instance: string, started: InfraStarted) =>
           Effect.forEach(Object.entries(started.routes), ([route, port]) => router.expose({ host: hostFor(name, route, instance), port }), {
             discard: true
           })
 
         const urlsOf = (name: InfraName, instance: string, started: InfraStarted) =>
-          Object.fromEntries(Object.keys(started.routes).map((route) => [route, urlFor(hostFor(name, route, instance))]))
+          Object.fromEntries(Object.keys(started.routes).map((route) => [route, proxy.url(hostFor(name, route, instance))]))
 
         const startInstance = Effect.fn("InfraManager.start", { root: true })(
           function* (key: string) {

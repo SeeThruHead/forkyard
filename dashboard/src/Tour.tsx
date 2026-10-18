@@ -1,7 +1,6 @@
 import { type ReactNode, useState } from "react"
 import { InfraName, ownerOfWorktree, type RunId, ServiceName } from "../../src/Ids.ts"
 import { runOf, type Snapshot, type WorktreeView } from "../../src/Model.ts"
-import { mapleLink, mapleUrl } from "./forkyard.ts"
 import { Branch, branchOrder, EnvTable, Frames, InfraChips, Logs, RestartButton, ServiceChips } from "./ui.tsx"
 
 type Step = {
@@ -229,28 +228,22 @@ const steps: ReadonlyArray<Step> = [
 ]
 
 const telemetryStep: Step = {
-  title: "Everything is traced in Maple",
-  body: ({ project }) => (
+  title: "Everything can be traced",
+  body: () => (
     <>
       <p>
-        forkyard starts its own Maple, owned by the daemon's scope like Traefik, and sends it everything over OpenTelemetry. Nothing here
-        needs a collector.
+        Point forkyard at any OpenTelemetry server with <code>FORKYARD_OTLP_URL</code> (and <code>FORKYARD_OTLP_HEADERS</code> if it needs
+        them) and it sends everything there. Without it, nothing is exported.
       </p>
       <ul>
         <li>
           <strong>The daemon itself:</strong> every step is an <code>Effect.fn</code> span with the worktree, service and run as attributes.
           Each service run is its own trace: env resolution (one span per source), spawn, the health checks, and a span that lasts as long
-          as the process. Metrics count starts, exits and restarts and time how long services take to become ready.{" "}
-          <a href={mapleLink("traces", { service: "forkyard" })} target="_blank" rel="noreferrer">
-            forkyard's traces
-          </a>
+          as the process. Metrics count starts, exits and restarts and time how long services take to become ready.
         </li>
         <li>
           <strong>Every process's output:</strong> forkyard ships each line as an OTLP log under the service's own name, with the worktree
-          as its namespace, linked to that run's trace. This works for apps with no OpenTelemetry at all, like the Bun and Python examples.{" "}
-          <a href={mapleLink("logs", { service: "worker" })} target="_blank" rel="noreferrer">
-            worker logs across repos
-          </a>
+          as its namespace, linked to that run's trace. This works for apps with no OpenTelemetry at all, like the Bun and Python examples.
         </li>
         <li>
           <strong>The apps:</strong> forkyard gives each process <code>OTEL_EXPORTER_OTLP_ENDPOINT</code>, <code>OTEL_SERVICE_NAME</code>{" "}
@@ -262,19 +255,6 @@ const telemetryStep: Step = {
           websocket, so a click here and the daemon work it caused are one trace.
         </li>
       </ul>
-      <p>
-        {project("storefront").map((worktree) => (
-          <span key={worktree.id} style={{ marginRight: 14 }}>
-            <Branch name={worktree.branch} />{" "}
-            <a href={mapleLink("traces", { ns: worktree.id })} target="_blank" rel="noreferrer">
-              traces
-            </a>
-          </span>
-        ))}
-        <a href={mapleUrl} target="_blank" rel="noreferrer">
-          Open Maple
-        </a>
-      </p>
     </>
   )
 }

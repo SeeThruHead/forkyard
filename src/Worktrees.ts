@@ -1,5 +1,6 @@
 import { Clock, Context, Effect, FiberMap, Latch, Layer, Metric, Option, Schema } from "effect"
-import { type AbsolutePath, branchSlug, type Port, type WorktreeId, worktreeId } from "./Ids.ts"
+import { type AbsolutePath, branchSlug, type WorktreeId, worktreeId } from "./Ids.ts"
+import { ProxyAddress } from "./ProxyAddress.ts"
 import * as Metrics from "./Metrics.ts"
 import { ForkyardError } from "./Protocol.ts"
 import { type DesiredWorktree, Registry } from "./Registry.ts"
@@ -49,10 +50,11 @@ export class Worktrees extends Context.Service<
     readonly down: (id: WorktreeId) => Effect.Effect<void>
   }
 >()("forkyard/Worktrees") {
-  static readonly layer = (options: { readonly domain: string; readonly proxyPort: Port }) =>
+  static readonly layer = (options: { readonly domain: string }) =>
     Layer.effect(
       Worktrees,
       Effect.gen(function* () {
+        const proxy = yield* ProxyAddress
         const supervisor = yield* Supervisor
         const status = yield* Status
         const registry = yield* Registry
@@ -78,7 +80,7 @@ export class Worktrees extends Context.Service<
             root: request.root,
             profile: request.profile,
             domain: `${id}.${options.domain}`,
-            proxyPort: options.proxyPort
+            proxyPort: proxy.port
           } satisfies Worktree
         })
 

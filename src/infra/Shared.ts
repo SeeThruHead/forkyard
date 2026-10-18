@@ -1,5 +1,6 @@
-import { Effect, Schedule } from "effect"
+import { Effect } from "effect"
 import { allocatePort } from "../Ports.ts"
+import { pollUntilReady } from "../Readiness.ts"
 import { cmd, type Env, InfraError, type InfraProcess, type InfraTools, type Run } from "../Stack.ts"
 
 export const port = (infra: string) => allocatePort.pipe(Effect.mapError((error) => new InfraError({ infra, message: error.message })))
@@ -18,8 +19,7 @@ export const forkyardName = (...parts: ReadonlyArray<string | number>) => [`fork
 export const containerName = (infra: string, instance: string) => forkyardName(infra, instance.replaceAll(/[^a-zA-Z0-9]+/g, "-"))
 
 export const waitUntil = <A, E, R>(infra: string, check: Effect.Effect<A, E, R>, within: `${number} seconds`) =>
-  check.pipe(
-    Effect.retry(Schedule.spaced("200 millis").pipe(Schedule.upTo({ duration: within }))),
+  pollUntilReady(check, { every: "200 millis", within }).pipe(
     Effect.mapError(() => new InfraError({ infra, message: `not ready within ${within}` }))
   )
 
@@ -44,7 +44,7 @@ export const readyOrExit = Effect.fn("Shared.readyOrExit")(function* <A, E, R>(
 export const fetchOk = (url: string) =>
   Effect.tryPromise((signal) =>
     fetch(url, { signal }).then((response) => (response.ok ? response : Promise.reject(new Error(`${response.status}`))))
-  ).pipe(Effect.timeout("2 seconds"))
+  )
 
 export const removeContainer = (tools: InfraTools, name: string) =>
   tools.exec({ name: "docker rm", run: cmd("docker", "rm", "-f", name), env: {}, cwd: "/" }).pipe(Effect.scoped, Effect.ignore)

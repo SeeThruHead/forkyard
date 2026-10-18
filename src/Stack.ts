@@ -126,8 +126,9 @@ export type Node = ServiceNode | InfraNode
 
 export const hostOf = (worktree: Worktree, name: string) => `${name}.${worktree.domain}`
 
-export const urlOf = (worktree: Worktree, name: string) =>
-  `http://${hostOf(worktree, name)}${worktree.proxyPort === 80 ? "" : `:${worktree.proxyPort}`}`
+export const proxiedUrl = (host: string, proxyPort: Port) => `http://${host}${proxyPort === 80 ? "" : `:${proxyPort}`}`
+
+export const urlOf = (worktree: Worktree, name: string) => proxiedUrl(hostOf(worktree, name), worktree.proxyPort)
 
 export class CurrentWorktree extends Context.Service<CurrentWorktree, Worktree>()("forkyard/Stack/CurrentWorktree") {}
 

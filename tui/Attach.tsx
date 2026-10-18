@@ -177,7 +177,7 @@ const App = ({ context, initial }: AppProps) => {
       rows={rows}
       onOpen={(id: WorktreeId) => setView({ _tag: "Worktree", id })}
       onStop={stop}
-      onDashboard={() => openUrl("http://forkyard.localhost")}
+      onDashboard={() => run(ForkyardClient.use((forkyard) => forkyard.Info()).pipe(Effect.map((info) => openUrl(info.dashboard))))}
       onQuit={exit}
     />
   )

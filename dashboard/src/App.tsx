@@ -3,7 +3,7 @@ import { AsyncResult } from "effect/reactivity"
 import type { ReactNode } from "react"
 import { WorktreeId } from "../../src/Ids.ts"
 import type { Snapshot, UsageMap } from "../../src/Model.ts"
-import { mapleUrl, snapshotAtom, usageAtom } from "./forkyard.ts"
+import { snapshotAtom, usageAtom } from "./forkyard.ts"
 import { formatCpu, formatMem, pidsOf, sumUsage, worktreeOrder } from "./format.ts"
 import { Home } from "./Home.tsx"
 import { Tour } from "./Tour.tsx"
@@ -78,9 +78,6 @@ export const App = () => {
           </a>
           <a href="#/tour/1" className={view === "tour" ? "on" : ""}>
             Tour
-          </a>
-          <a href={mapleUrl} target="_blank" rel="noreferrer">
-            Maple
           </a>
         </nav>
       </div>

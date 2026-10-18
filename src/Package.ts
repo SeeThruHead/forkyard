@@ -34,4 +34,4 @@ export const cliPath = isSourceCheckout ? fromPackage("bin", "forkyard") : fromP
 
 export const dashboardDir = fromPackage("dashboard", "dist")
 
-export const telemetryDir = fromPackage("telemetry")
+export const httpPortFile = (home: string) => join(home, "http-port")

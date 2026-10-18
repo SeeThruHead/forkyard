@@ -5,4 +5,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends iptables && rm 
 COPY app-postgres /app-postgres
 WORKDIR /app-postgres
 RUN npm install --no-audit --no-fund
-ENV FORKYARD_PROXY=docker FORKYARD_TELEMETRY=false
+ENV FORKYARD_PROXY=docker

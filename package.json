@@ -10,8 +10,7 @@
     "README.md",
     "dashboard/dist",
     "dist",
-    "launcher",
-    "telemetry"
+    "launcher"
   ],
   "type": "module",
   "exports": {

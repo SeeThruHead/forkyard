@@ -7,4 +7,4 @@ RUN npm install -g /tmp/forkyard.tgz
 COPY app /app
 WORKDIR /app
 RUN npm install --no-audit --no-fund
-ENV FORKYARD_PROXY=binary FORKYARD_TELEMETRY=false
+ENV FORKYARD_PROXY=binary

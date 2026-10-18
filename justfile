@@ -10,7 +10,7 @@ setup:
     pnpm --dir examples/northwind install
     pnpm --dir examples/bun-dotenv install
 
-# Run the daemon in the foreground (Traefik on port 80, Maple, the dashboard)
+# Run the daemon in the foreground (Traefik on port 80, the dashboard)
 daemon:
     pnpm run daemon
 

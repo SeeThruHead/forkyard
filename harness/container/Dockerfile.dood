@@ -4,4 +4,4 @@ RUN curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/dock
 COPY app-postgres /app-postgres
 WORKDIR /app-postgres
 RUN npm install --no-audit --no-fund
-ENV FORKYARD_INSTANCE=dood FORKYARD_DOCKER_HOST=host.docker.internal FORKYARD_DOCKER_BIND=0.0.0.0 FORKYARD_TELEMETRY=true FORKYARD_MAPLE_PORT=14421
+ENV FORKYARD_INSTANCE=dood FORKYARD_DOCKER_HOST=host.docker.internal FORKYARD_DOCKER_BIND=0.0.0.0
