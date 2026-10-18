@@ -1,6 +1,6 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Cause, Console, Effect, FileSystem, Layer, Option, Path, Stream } from "effect"
-import { Argument, Command, Flag } from "effect/cli"
+import { Argument, CliError, Command, Flag } from "effect/cli"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { ForkyardClient } from "../src/Client.ts"
 import { AbsolutePath, InfraName, ownerOfWorktree, ServiceName, type WorktreeId } from "../src/Ids.ts"
@@ -245,6 +245,9 @@ const messageOf = (error: unknown): string => {
   return error.cause === undefined ? "" : messageOf(error.cause)
 }
 
+const shownByTheCli = (cause: Cause.Cause<unknown>) =>
+  Option.exists(Cause.findErrorOption(cause), (error) => error instanceof CliError.ShowHelp)
+
 const report = (cause: Cause.Cause<unknown>) =>
   Option.match(Cause.findErrorOption(cause).pipe(Option.map(messageOf), Option.filter(Boolean)), {
     onNone: () => Console.error(Cause.pretty(cause)),
@@ -259,7 +262,7 @@ if (unsupported) {
 } else {
   forkyard.pipe(
     Command.run({ version: packageVersion }),
-    Effect.tapCause((cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : report(cause))),
+    Effect.tapCause((cause) => (Cause.hasInterruptsOnly(cause) || shownByTheCli(cause) ? Effect.void : report(cause))),
     Effect.provide(NodeServices.layer),
     Effect.provide(osLayer),
     NodeRuntime.runMain({ disableErrorReporting: true })
