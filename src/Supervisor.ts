@@ -53,6 +53,13 @@ export class ExitedBeforeReady extends Schema.TaggedError<ExitedBeforeReady>()("
   message: Schema.String
 }) {}
 
+export class NeverHealthy extends Schema.TaggedError<NeverHealthy>()("NeverHealthy", {
+  message: Schema.String
+}) {}
+
+const lastAnswer = (error: { readonly _tag: string; readonly message: string }) =>
+  error._tag === "TimeoutError" ? "it did not answer" : error.message
+
 type Ready = Deferred.Deferred<void, DependencyFailed>
 
 type Readiness = Readonly<Record<string, Ready>>
@@ -186,16 +193,17 @@ export class Supervisor extends Context.Service<
           status.serviceState(worktree.id, service.name, state)
 
         const waitHealthy = (port: Port, path: string) =>
-          http
-            .get(`http://127.0.0.1:${port}${path}`)
-            .pipe(
-              Effect.retry(Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "60 seconds" }))),
-              Effect.asVoid,
-              Effect.withSpan("Supervisor.waitHealthy", { attributes: { "server.port": port, "url.path": path } })
-            )
+          http.get(`http://127.0.0.1:${port}${path}`).pipe(
+            Effect.timeout("2 seconds"),
+            Effect.retry(Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "60 seconds" }))),
+            Effect.mapError((error) => new NeverHealthy({ message: `${path} was not healthy within 60 seconds: ${lastAnswer(error)}` })),
+            Effect.asVoid,
+            Effect.withSpan("Supervisor.waitHealthy", { attributes: { "server.port": port, "url.path": path } })
+          )
 
         const waitRouted = (base: string, path: string) =>
           http.get(`${base}${path}`).pipe(
+            Effect.timeout("2 seconds"),
             Effect.retry(Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "10 seconds" }))),
             Effect.asVoid,
             Effect.catch(() => Effect.logWarning(`${base} is healthy but not reachable through the proxy yet`)),
