@@ -26,7 +26,7 @@ import type { RunRef, ServiceState, ServiceView } from "./Model.ts"
 import { plan } from "./Plan.ts"
 import { allocatePort } from "./Ports.ts"
 import { Proc, type Spawned } from "./Proc.ts"
-import { pollUntilReady } from "./Readiness.ts"
+import { pollUntilReady, unlessItExits } from "./Readiness.ts"
 import { Router } from "./Router.ts"
 import {
   hostOf,
@@ -48,17 +48,6 @@ import { changesUnder } from "./Watch.ts"
 export class DependencyFailed extends Schema.TaggedError<DependencyFailed>()("DependencyFailed", {
   service: Schema.String
 }) {}
-
-export class ExitedBeforeReady extends Schema.TaggedError<ExitedBeforeReady>()("ExitedBeforeReady", {
-  message: Schema.String
-}) {}
-
-export class NeverHealthy extends Schema.TaggedError<NeverHealthy>()("NeverHealthy", {
-  message: Schema.String
-}) {}
-
-const lastAnswer = (error: { readonly _tag: string; readonly message: string }) =>
-  error._tag === "TimeoutError" ? "it did not answer" : error.message
 
 type Ready = Deferred.Deferred<void, DependencyFailed>
 
@@ -193,16 +182,13 @@ export class Supervisor extends Context.Service<
           status.serviceState(worktree.id, service.name, state)
 
         const waitHealthy = (port: Port, path: string) =>
-          http.get(`http://127.0.0.1:${port}${path}`).pipe(
-            (check) => pollUntilReady(check, { every: "100 millis", within: "60 seconds" }),
-            Effect.mapError((error) => new NeverHealthy({ message: `${path} was not healthy within 60 seconds: ${lastAnswer(error)}` })),
+          pollUntilReady(path, http.get(`http://127.0.0.1:${port}${path}`), { every: "100 millis", within: "60 seconds" }).pipe(
             Effect.asVoid,
             Effect.withSpan("Supervisor.waitHealthy", { attributes: { "server.port": port, "url.path": path } })
           )
 
         const waitRouted = (base: string, path: string) =>
-          http.get(`${base}${path}`).pipe(
-            (check) => pollUntilReady(check, { every: "100 millis", within: "10 seconds" }),
+          pollUntilReady(base, http.get(`${base}${path}`), { every: "100 millis", within: "10 seconds" }).pipe(
             Effect.asVoid,
             Effect.catch(() => Effect.logWarning(`${base} is healthy but not reachable through the proxy yet`)),
             Effect.withSpan("Supervisor.waitRouted", { attributes: { "url.full": `${base}${path}` } })
@@ -315,9 +301,6 @@ export class Supervisor extends Context.Service<
             Effect.map((entries): OwnedEnv => owned("forkyard:ports", Object.fromEntries(entries)))
           )
 
-        const exitedBeforeReady = (spawned: Spawned) =>
-          spawned.exited.pipe(Effect.flatMap((code) => new ExitedBeforeReady({ message: `exited with ${code} before it was ready` })))
-
         const readyCheck = (service: ServiceNode, spawned: Spawned, port: Port | undefined) => {
           if (service.lifecycle._tag === "RunOnce") return Effect.void
           if (service.lifecycle.ready._tag === "LogLine") return spawned.logged
@@ -327,7 +310,7 @@ export class Supervisor extends Context.Service<
         }
 
         const awaitReadiness = (service: ServiceNode, spawned: Spawned, port: Port | undefined) =>
-          readyCheck(service, spawned, port).pipe(Effect.raceFirst(exitedBeforeReady(spawned)), Effect.asVoid)
+          readyCheck(service, spawned, port).pipe(unlessItExits(spawned), Effect.asVoid)
 
         const startProcess = Effect.fn("Supervisor.startService", { root: true })(function* (
           worktree: Worktree,

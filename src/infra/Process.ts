@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { InfraName, type Port } from "../Ids.ts"
 import { type Env, InfraError, type InfraServer, type InfraSpec, type InfraTools, type Run, toRun, type Worktree } from "../Stack.ts"
-import { fetchOk, port, readyOrExit } from "./Shared.ts"
+import { fetchOk, port, readyOrExit, upperSnake } from "./Shared.ts"
 
 export type ProcessTenant = {
   readonly url: string
@@ -20,8 +20,6 @@ type Options = {
   readonly uses?: ReadonlyArray<InfraSpec>
   readonly provides?: (process: ProcessTenant, worktree: Worktree) => Env
 }
-
-const upperSnake = (name: string) => name.toUpperCase().replaceAll(/[^A-Z0-9]+/g, "_")
 
 export const infra = (options: Options): InfraSpec => {
   const name = InfraName.make(options.name)

@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { allocatePort } from "../Ports.ts"
-import { pollUntilReady } from "../Readiness.ts"
-import { cmd, type Env, InfraError, type InfraProcess, type InfraTools, type Run } from "../Stack.ts"
+import { pollUntilReady, unlessItExits } from "../Readiness.ts"
+import { cmd, type Env, InfraError, type InfraProcess, type InfraTools } from "../Stack.ts"
 
 export const port = (infra: string) => allocatePort.pipe(Effect.mapError((error) => new InfraError({ infra, message: error.message })))
 
@@ -14,32 +14,18 @@ export const dockerReach = dockerUpstream ?? "127.0.0.1"
 export const publish = (hostPort: number, containerPort: number) =>
   `${process.env.FORKYARD_DOCKER_BIND ?? "127.0.0.1"}:${hostPort}:${containerPort}`
 
+export const upperSnake = (name: string) => name.toUpperCase().replaceAll(/[^A-Z0-9]+/g, "_")
+
 export const forkyardName = (...parts: ReadonlyArray<string | number>) => [`forkyard${instanceName}`, ...parts].join("-")
 
 export const containerName = (infra: string, instance: string) => forkyardName(infra, instance.replaceAll(/[^a-zA-Z0-9]+/g, "-"))
 
-export const waitUntil = <A, E, R>(infra: string, check: Effect.Effect<A, E, R>, within: `${number} seconds`) =>
-  pollUntilReady(check, { every: "200 millis", within }).pipe(
-    Effect.mapError(() => new InfraError({ infra, message: `not ready within ${within}` }))
+export const readyOrExit = <A, E, R>(infra: string, started: InfraProcess, check: Effect.Effect<A, E, R>, within: `${number} seconds`) =>
+  pollUntilReady(infra, check, { every: "200 millis", within }).pipe(
+    unlessItExits(started),
+    Effect.mapError((error) => new InfraError({ infra, message: error.message })),
+    Effect.withSpan("Shared.readyOrExit", { attributes: { "forkyard.infra": infra } })
   )
-
-export const readyOrExit = Effect.fn("Shared.readyOrExit")(function* <A, E, R>(
-  infra: string,
-  started: InfraProcess,
-  check: Effect.Effect<A, E, R>,
-  within: `${number} seconds`
-) {
-  const exitedEarly = started.exited.pipe(
-    Effect.flatMap((code) =>
-      started.output.pipe(
-        Effect.flatMap((output) =>
-          Effect.fail(new InfraError({ infra, message: `exited with ${code} before it was ready:\n${output.join("\n")}` }))
-        )
-      )
-    )
-  )
-  return yield* waitUntil(infra, check, within).pipe(Effect.raceFirst(exitedEarly))
-})
 
 export const fetchOk = (url: string) =>
   Effect.tryPromise((signal) =>
@@ -54,11 +40,14 @@ export const dockerContainer = Effect.fn("Shared.dockerContainer")(function* (
   options: { readonly infra: string; readonly name: string; readonly args: ReadonlyArray<string>; readonly env?: Env }
 ) {
   yield* Effect.annotateCurrentSpan({ "container.name": options.name, "forkyard.infra": options.infra })
-  const docker = (label: string, run: Run) => tools.exec({ name: label, run, env: {}, cwd: "/" }).pipe(Effect.scoped, Effect.ignore)
-  const stopGracefully = docker("docker stop", cmd("docker", "stop", "--time", "20", options.name)).pipe(
-    Effect.andThen(docker("docker rm", cmd("docker", "rm", "-f", options.name))),
-    Effect.withSpan("Shared.dockerStop", { attributes: { "container.name": options.name } })
-  )
+  const stopGracefully = tools
+    .exec({ name: "docker stop", run: cmd("docker", "stop", "--time", "20", options.name), env: {}, cwd: "/" })
+    .pipe(
+      Effect.scoped,
+      Effect.ignore,
+      Effect.andThen(removeContainer(tools, options.name)),
+      Effect.withSpan("Shared.dockerStop", { attributes: { "container.name": options.name } })
+    )
   yield* Effect.addFinalizer(() => stopGracefully)
   yield* stopGracefully
   return yield* tools.spawn({

@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { InfraName } from "../Ids.ts"
 import { cmd, type Env, type InfraServer, type InfraSpec, type InfraTools, type Worktree } from "../Stack.ts"
-import { fetchOk, port, readyOrExit } from "./Shared.ts"
+import { fetchOk, port, readyOrExit, upperSnake } from "./Shared.ts"
 
 export type TemporalTenant = {
   readonly address: string
@@ -16,8 +16,6 @@ type Options = {
   readonly namespaces: ReadonlyArray<string>
   readonly env?: (temporal: TemporalTenant) => Env
 }
-
-const upperSnake = (name: string) => name.toUpperCase().replaceAll(/[^A-Z0-9]+/g, "_")
 
 export const dev = (options: Options): InfraSpec => {
   const name = InfraName.make(options.name ?? "temporal")
