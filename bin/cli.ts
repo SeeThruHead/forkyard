@@ -238,16 +238,17 @@ const forkyard = Command.make("forkyard").pipe(
   Command.withSubcommands([daemon, up, down, status, env, logs, attach, infraCommand, service, update])
 )
 
-const messageOf = (error: unknown) => {
+const messageOf = (error: unknown): string => {
   if (typeof error === "string") return error
-  if (error instanceof Error) return error.message
-  return String(error)
+  if (!(error instanceof Error)) return String(error)
+  if (error.message) return error.message
+  return error.cause === undefined ? "" : messageOf(error.cause)
 }
 
 const report = (cause: Cause.Cause<unknown>) =>
-  Option.match(Cause.findErrorOption(cause), {
+  Option.match(Cause.findErrorOption(cause).pipe(Option.map(messageOf), Option.filter(Boolean)), {
     onNone: () => Console.error(Cause.pretty(cause)),
-    onSome: (error) => Console.error(`forkyard: ${messageOf(error)}`)
+    onSome: (message) => Console.error(`forkyard: ${message}`)
   })
 
 const unsupported = unsupportedHere()
