@@ -91,6 +91,10 @@ export type InfraSpec = {
     usesEnv: Env
   ) => Effect.Effect<InfraStarted, InfraError, Scope.Scope>
   readonly tenant: (server: InfraServer, worktree: Worktree, tools: InfraTools) => Effect.Effect<Env, InfraError, Scope.Scope>
+  readonly reap?: {
+    readonly after: Duration.Input
+    readonly forget: (server: InfraServer, tenant: Worktree, tools: InfraTools) => Effect.Effect<boolean, InfraError>
+  }
 }
 
 export type Exposure = { readonly _tag: "Routed"; readonly health: string } | { readonly _tag: "Internal" }

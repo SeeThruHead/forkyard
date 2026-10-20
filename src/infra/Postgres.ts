@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg"
-import { Effect, Redacted } from "effect"
+import { type Duration, Effect, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { databaseName, InfraName, type Port } from "../Ids.ts"
 import { cmd, type Env, InfraError, type InfraServer, type InfraSpec, type InfraTools, type Run, toRun, type Worktree } from "../Stack.ts"
@@ -24,6 +24,7 @@ type Options = {
   readonly golden?: Golden
   readonly copy?: Copy
   readonly env?: (database: Database) => Env
+  readonly reapAfter?: Duration.Input | false
 }
 
 const cloningFilesystems = ["btrfs", "xfs", "zfs", "apfs"]
@@ -76,6 +77,11 @@ const dropTemplate = (database: string) =>
   )
 
 const dropDatabase = (database: string) => SqlClient.SqlClient.use((sql) => sql`DROP DATABASE IF EXISTS ${sql(database)} WITH (FORCE)`)
+
+const connectionsTo = (database: string) =>
+  SqlClient.SqlClient.use(
+    (sql) => sql<{ readonly n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = ${database}`
+  ).pipe(Effect.map((rows) => rows[0]?.n ?? 0))
 
 export const docker = (options: Options): InfraSpec => {
   const name = InfraName.make(options.name ?? "postgres")
@@ -280,12 +286,22 @@ export const docker = (options: Options): InfraSpec => {
     return `recreated ${database}${template ? ` from ${template}` : ""}; restart services that keep connections open`
   })
 
+  const forget = Effect.fn("Postgres.forget")(function* (server: InfraServer, tenant: Worktree) {
+    if (options.golden && isSnapshotSource(tenant, options.golden)) return false
+    const serverPort = yield* serverPortOf(server)
+    const database = databaseOf(tenant)
+    if ((yield* onServer(serverPort, "count connections", connectionsTo(database))) > 0) return false
+    yield* onServer(serverPort, "drop unused database", dropDatabase(database))
+    return true
+  })
+
   return {
     name,
     scope: options.scope,
     variant: variantOf(image),
     start,
     tenant,
+    ...(options.reapAfter === false ? {} : { reap: { after: options.reapAfter ?? "7 days", forget } }),
     actions: { "refresh-golden": refreshGolden, "reset-database": resetDatabase }
   }
 }

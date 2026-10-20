@@ -31,6 +31,7 @@ import { Runs } from "./Runs.ts"
 import { Status } from "./Status.ts"
 import * as Store from "./Store.ts"
 import { Supervisor } from "./Supervisor.ts"
+import { Tenants } from "./Tenants.ts"
 import { observability, type TelemetryTarget } from "./Telemetry.ts"
 import { Worktrees } from "./Worktrees.ts"
 
@@ -171,6 +172,7 @@ export const layer = (options: DaemonOptions) => {
     Layer.provideMerge(EnvResolver.layer),
     Layer.provideMerge(InfraManager.layer({ domain: options.domain })),
     Layer.provideMerge(Instances.layer),
+    Layer.provideMerge(Tenants.layer),
     Layer.provideMerge(Sharing.layer)
   )
 

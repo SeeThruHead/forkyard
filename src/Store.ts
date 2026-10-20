@@ -64,6 +64,18 @@ const migrations = Migrator.fromRecord({
   "8_process_start_time": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE processes ADD COLUMN started_at INTEGER`
+  }),
+  "9_infra_tenants": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE infra_tenants (
+      infra TEXT NOT NULL,
+      instance TEXT NOT NULL,
+      tenant TEXT NOT NULL,
+      worktree TEXT NOT NULL,
+      root TEXT NOT NULL,
+      last_used INTEGER NOT NULL,
+      PRIMARY KEY (infra, instance, tenant, root)
+    )`
   })
 })
 

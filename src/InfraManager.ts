@@ -1,8 +1,9 @@
-import { Context, Effect, Layer, RcMap, Ref, Semaphore, type Scope } from "effect"
+import { Context, Duration, Effect, Layer, RcMap, Ref, Semaphore, type Scope } from "effect"
 import { type InfraName, ownerOfInfra, Pid } from "./Ids.ts"
 import { ProxyAddress } from "./ProxyAddress.ts"
 import { Proc } from "./Proc.ts"
 import { Router } from "./Router.ts"
+import { Tenants } from "./Tenants.ts"
 import { type Env, InfraError, type InfraServer, type InfraSpec, type InfraStarted, type InfraTools, type Worktree } from "./Stack.ts"
 
 export type InfraLease = {
@@ -54,6 +55,7 @@ export class InfraManager extends Context.Service<
         const proxy = yield* ProxyAddress
         const proc = yield* Proc
         const router = yield* Router
+        const tenants = yield* Tenants
         const requests = yield* Ref.make<Readonly<Record<string, { readonly spec: InfraSpec; readonly origin: Worktree }>>>({})
 
         const hostFor = (name: InfraName, route: string, instance: string) =>
@@ -103,6 +105,28 @@ export class InfraManager extends Context.Service<
         )
         yield* Effect.addFinalizer(() => stopAllAtOnce)
 
+        const forgetTenant = (spec: InfraSpec, server: InfraServer, instance: string, tenant: Worktree) => {
+          if (!spec.reap) return Effect.succeed(false)
+          return spec.reap
+            .forget(server, tenant, toolsFor(proc, instance))
+            .pipe(Effect.tap((dropped) => (dropped ? tenants.forget(spec.name, instance, tenant.id) : Effect.void)))
+        }
+
+        const reap = Effect.fn("InfraManager.reap")(function* (spec: InfraSpec, server: InfraServer, instance: string) {
+          if (!spec.reap) return []
+          const graceMillis = Duration.toMillis(spec.reap.after)
+          const dropped = yield* server.exclusive(
+            tenants
+              .unused(spec.name, instance, graceMillis)
+              .pipe(Effect.flatMap((unused) => Effect.filter(unused, (tenant) => forgetTenant(spec, server, instance, tenant))))
+          )
+          if (dropped.length > 0)
+            yield* Effect.logInfo(
+              `infra ${spec.name}: dropped tenants unused for ${Duration.format(Duration.millis(graceMillis))}: ${dropped.map((tenant) => tenant.id).join(", ")}`
+            )
+          return dropped
+        })
+
         const acquire: (spec: InfraSpec, worktree: Worktree) => Effect.Effect<InfraLease, InfraError, Scope.Scope> = Effect.fn(
           "InfraManager.acquire"
         )(function* (spec: InfraSpec, worktree: Worktree) {
@@ -116,7 +140,12 @@ export class InfraManager extends Context.Service<
           const key = keyOf(spec.name, instance)
           yield* Ref.update(requests, (all) => ({ ...all, [key]: { spec, origin: worktree } }))
           const server = yield* RcMap.get(servers, key)
+          yield* tenants.use(spec.name, instance, worktree)
           const env = yield* spec.tenant(server, worktree, toolsFor(proc, instance))
+          yield* reap(spec, server, instance).pipe(
+            Effect.catchCause((cause) => Effect.logWarning(`infra ${spec.name}: could not reap unused tenants`, cause)),
+            Effect.forkScoped
+          )
 
           return { env, server } satisfies InfraLease
         })
