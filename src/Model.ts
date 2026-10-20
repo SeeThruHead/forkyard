@@ -137,6 +137,8 @@ const pidsOfViews = (views: ReadonlyArray<ServiceView>) =>
     return run ? [run.pid] : []
   })
 
+export const sharedCountOf = (worktree: WorktreeView) => Object.values(worktree.services).filter((view) => view.sharedWith).length
+
 export const ownPidsOf = (worktree: WorktreeView) => pidsOfViews(Object.values(worktree.services).filter((view) => !view.sharedWith))
 
 export const distinctPids = (worktrees: ReadonlyArray<WorktreeView>) => [

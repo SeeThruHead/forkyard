@@ -9,6 +9,7 @@ import {
   runOf,
   serviceUrl,
   type ServiceView,
+  sharedCountOf,
   sharedLabel,
   type Snapshot,
   usageFor,
@@ -147,6 +148,7 @@ const RowLine = ({ row, usage, selected }: RowProps) => {
           {pad(row.worktree.branch, 22)}
         </Text>
         <Text color={color}>{pad(label, 20)}</Text>
+        <Text color={theme.shared}>{pad(sharedCountOf(row.worktree) > 0 ? `${sharedCountOf(row.worktree)} shared` : "", 11)}</Text>
         <Text color={infraReady === infra.length ? theme.muted : theme.starting}>{pad(`infra ${infraReady}/${infra.length}`, 13)}</Text>
         <Text color={theme.text}>{pad(formatCpu(resources), 6)}</Text>
         <Text color={theme.text}>{pad(formatMem(resources), 7)}</Text>

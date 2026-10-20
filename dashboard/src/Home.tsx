@@ -9,6 +9,7 @@ import {
   ownPidsOf,
   runOf,
   serviceUrl,
+  sharedCountOf,
   sharedLabel,
   type Snapshot,
   type UsageMap,
@@ -129,6 +130,7 @@ const Branch = ({
         </button>
         <span className="branch-label">{worktree.branch}</span>
         <span className={`stat c-${health.state}`}>{health.label}</span>
+        {sharedCountOf(worktree) > 0 ? <span className="stat shared">{sharedCountOf(worktree)} shared</span> : null}
         <span className={`stat ${infraReady === infra.length ? "dim" : "c-Starting"}`}>
           infra {infraReady}/{infra.length}
         </span>
