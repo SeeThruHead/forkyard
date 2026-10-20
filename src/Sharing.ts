@@ -168,7 +168,16 @@ export class Sharing extends Context.Service<
                   ]
             )
           )
-          const references = Object.fromEntries(resolved.map(({ service, env }) => [service.name, referencesOf(env, worktree, names)]))
+          const references = Object.fromEntries(
+            resolved.map(({ service, env }) => [
+              service.name,
+              referencesOf(
+                env,
+                worktree,
+                names.filter((name) => name !== service.name)
+              )
+            ])
+          )
           return { fingerprints, references } satisfies ServiceFingerprints
         })
 
