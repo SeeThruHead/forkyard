@@ -30,7 +30,7 @@ import { allocatePort } from "./Ports.ts"
 import { Proc, type Spawned } from "./Proc.ts"
 import { pollUntilReady, unlessItExits } from "./Readiness.ts"
 import { Router } from "./Router.ts"
-import { shareableInfra, shareableServices, Sharing } from "./Sharing.ts"
+import { reasonsNotShared, shareableInfra, shareableServices, Sharing } from "./Sharing.ts"
 import {
   hostOf,
   InfraError,
@@ -326,7 +326,7 @@ export class Supervisor extends Context.Service<
                 envOf: (service) => resolveEnv(worktree, service, ownedEnvFor(service, infraEnv), undefined)
               })
             : { fingerprints: {}, references: {} }
-          const shared = shareableServices({
+          const sharingInput = {
             services,
             infra: sharedInfra,
             mine: measured.fingerprints,
@@ -336,15 +336,17 @@ export class Supervisor extends Context.Service<
               instanceKey
             ),
             references: measured.references
-          })
+          }
+          const shared = shareableServices(sharingInput)
           yield* publish(
             worktree,
             Object.fromEntries(Object.entries(measured.fingerprints).filter(([name]) => !shared.has(name))),
             instanceKey
           )
+          const notShared = Object.entries(reasonsNotShared(sharingInput, shared)).map(([name, reason]) => `${name} (${reason})`)
           if (base)
             yield* Effect.logInfo(
-              `${worktree.id} shares ${shared.size} of ${services.length} services and ${sharedInfra.size} infra with ${base.id}`
+              `${worktree.id} shares ${shared.size} of ${services.length} services and ${sharedInfra.size} infra with ${base.id}; runs its own: ${notShared.join(", ")}`
             )
 
           return { services, infraEnv, shared }

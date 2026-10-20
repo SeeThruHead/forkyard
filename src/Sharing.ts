@@ -51,6 +51,23 @@ export const shareableServices = (options: {
   return new Set(options.services.map((service) => service.name).filter((name) => !own.has(name)))
 }
 
+export const reasonsNotShared = (options: Parameters<typeof shareableServices>[0], shared: ReadonlySet<string>) =>
+  Object.fromEntries(
+    options.services
+      .filter((service) => !shared.has(service.name))
+      .map((service) => {
+        const mine = options.mine[service.name]
+        const base = options.base[service.name]
+        if (mine === undefined) return [service.name, "no inputs"] as const
+        if (base === undefined) return [service.name, "base does not run it"] as const
+        if (mine !== base) return [service.name, "changed"] as const
+        const infra = service.uses.filter((name) => !options.infra.has(name))
+        if (infra.length > 0) return [service.name, `uses own ${infra.join(", ")}`] as const
+        const calls = (options.references[service.name] ?? []).filter((name) => !shared.has(name))
+        return [service.name, `calls own ${calls.join(", ")}`] as const
+      })
+  )
+
 const runText = (run: Run) => ("shell" in run ? run.shell : [run.command, ...run.args].join(" "))
 
 const serviceFingerprint = (
