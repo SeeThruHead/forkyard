@@ -65,6 +65,7 @@ export const layer = (options: { readonly dashboardUrl: string }) =>
         Env: ({ id, service }) => envReport(id, service),
         Restart: ({ id, service }) => supervisor.restart(id, service),
         Own: ({ id, service }) => supervisor.own(id, service),
+        Share: ({ id, service }) => supervisor.share(id, service),
         Runs: ({ owner, service }) => runs.list(owner, service),
         RunLog: ({ runId }) => runLog(runId),
         Routes: () => router.routes.pipe(Effect.map(Record.map((route) => route.port))),

@@ -25,6 +25,7 @@ import { daemonEnv, EnvResolver, owned, type OwnedEnv, telemetryDefaults } from 
 import { BranchSlug, type InfraName, ownerOfWorktree, type Port, ServiceName, type WorktreeId, worktreeId } from "./Ids.ts"
 import { InfraManager } from "./InfraManager.ts"
 import { type Found, instanceKey, Instances } from "./Instances.ts"
+import { Pins } from "./Pins.ts"
 import * as Metrics from "./Metrics.ts"
 import type { RunRef, ServiceState, ServiceView } from "./Model.ts"
 import { plan } from "./Plan.ts"
@@ -159,6 +160,7 @@ export class Supervisor extends Context.Service<
     readonly run: (stack: Stack, worktree: Worktree) => Effect.Effect<never, unknown, Scope.Scope>
     readonly restart: (id: WorktreeId, service: ServiceName) => Effect.Effect<void>
     readonly own: (id: WorktreeId, service: ServiceName) => Effect.Effect<void>
+    readonly share: (id: WorktreeId, service: ServiceName) => Effect.Effect<void>
     readonly infraAction: (id: WorktreeId, infra: InfraName, action: string) => Effect.Effect<string, InfraError>
   }
 >()("forkyard/Supervisor") {
@@ -172,6 +174,7 @@ export class Supervisor extends Context.Service<
       Effect.gen(function* () {
         const infra = yield* InfraManager
         const instances = yield* Instances
+        const pins = yield* Pins
         const sharing = yield* Sharing
         const decisions = yield* Semaphore.make(1)
         const proc = yield* Proc
@@ -324,14 +327,10 @@ export class Supervisor extends Context.Service<
               ? instances.find(fingerprint, worktree.id).pipe(Effect.map((match) => [service.name, match] as const))
               : Effect.succeed([service.name, undefined] as const)
           })
-          const matched = Object.fromEntries(found.flatMap(([name, match]) => (match ? [[name, match] as const] : [])))
+          const pinned = yield* pins.of(worktree.id)
+          const matched = Object.fromEntries(found.flatMap(([name, match]) => (match && !pinned.has(name) ? [[name, match] as const] : [])))
           const keep = sharedTasksAllowed(services, new Set(Object.keys(matched)))
           const lenders = Object.fromEntries(Object.entries(matched).filter(([name]) => keep.has(name)))
-          yield* Effect.forEach(
-            services.filter((service) => !lenders[service.name]),
-            () => Effect.void,
-            { discard: true }
-          )
           return lenders as Readonly<Record<string, Found>>
         })
 
@@ -749,12 +748,10 @@ export class Supervisor extends Context.Service<
               Stream.changes
             )
 
-          const pinned = yield* Ref.make<ReadonlySet<string>>(new Set())
-
           const rejoinWhenOlderTwin = (service: ServiceNode, key: string) => {
             if (service.lifecycle._tag !== "LongRunning") return Effect.never
-            return instances.olderTwin(key).pipe(
-              Stream.filterEffect(() => Ref.get(pinned).pipe(Effect.map((names) => !names.has(service.name)))),
+            return Stream.zipLatest(instances.olderTwin(key), pins.changes(worktree.id)).pipe(
+              Stream.filter(([, pinned]) => !pinned.has(service.name)),
               Stream.runHead,
               Effect.flatMap((found) => (found._tag === "Some" ? Effect.fail(new Rejoin({ service: service.name })) : Effect.never))
             )
@@ -803,12 +800,7 @@ export class Supervisor extends Context.Service<
             )
 
           const takeOwn = (service: ServiceNode) =>
-            decisions
-              .withPermits(1)(Ref.update(pinned, (names) => new Set([...names, service.name])))
-              .pipe(
-                Effect.andThen(Effect.logInfo(`${worktree.id}/${service.name} starts its own copy on request`)),
-                Effect.andThen(own(service))
-              )
+            Effect.logInfo(`${worktree.id}/${service.name} starts its own copy on request`).pipe(Effect.andThen(own(service)))
 
           const moveOn = (service: ServiceNode): Effect.Effect<void, unknown, Scope.Scope> =>
             reclaim(service).pipe(
@@ -823,6 +815,10 @@ export class Supervisor extends Context.Service<
 
           const shareOrOwn = (service: ServiceNode, found: Found | undefined): Effect.Effect<void, unknown, Scope.Scope> => {
             if (!found) return own(service)
+            return pins.of(worktree.id).pipe(Effect.flatMap((pinned) => (pinned.has(service.name) ? own(service) : lend(service, found))))
+          }
+
+          const lend = (service: ServiceNode, found: Found): Effect.Effect<void, unknown, Scope.Scope> => {
             return borrow(worktree, service, found, readiness, mine(service)).pipe(
               Effect.catch((error) => {
                 if (error instanceof LenderGone) return moveOn(service)
@@ -843,7 +839,9 @@ export class Supervisor extends Context.Service<
         return Supervisor.of({
           run,
           restart: (id, service) => PubSub.publish(restarts, restartKey(id, service)).pipe(Effect.asVoid),
-          own: (id, service) => PubSub.publish(ownRequests, restartKey(id, service)).pipe(Effect.asVoid),
+          own: (id, service) =>
+            pins.pin(id, service).pipe(Effect.andThen(PubSub.publish(ownRequests, restartKey(id, service))), Effect.asVoid),
+          share: (id, service) => pins.unpin(id, service),
           infraAction
         })
       })

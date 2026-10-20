@@ -40,7 +40,7 @@ These need judgment, so they are not lint rules.
 
 ## The public protocol
 
-The tray app, the terminal UI, the dashboard and other tools talk to the daemon through the RPCs in `src/Protocol.ts`. The public ones are listed in `test/Protocol.test.ts` (`Info`, `Status`, `Usage`, `Up`, `Down`, `Restart`, `Own`, `Runs`, `RunLog`, `Env`, `DaemonLogs`, `Logs`). Clients may be older than the daemon, so:
+The tray app, the terminal UI, the dashboard and other tools talk to the daemon through the RPCs in `src/Protocol.ts`. The public ones are listed in `test/Protocol.test.ts` (`Info`, `Status`, `Usage`, `Up`, `Down`, `Restart`, `Own`, `Share`, `Runs`, `RunLog`, `Env`, `DaemonLogs`, `Logs`). Clients may be older than the daemon, so:
 
 - Public RPCs and their fields are only ever added to. Never remove or rename an RPC or a field, and never change what a field means.
 - New fields on anything a client reads are optional, so older daemons' messages still decode.

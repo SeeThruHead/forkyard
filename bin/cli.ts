@@ -186,6 +186,16 @@ const ownCommand = Command.make("own", { service: serviceArgument }, ({ service 
   }).pipe(Effect.scoped, Effect.provide(client))
 ).pipe(Command.withDescription("Run this worktree's own copy of a service instead of sharing one, before you change it"))
 
+const shareCommand = Command.make("share", { service: serviceArgument }, ({ service }) =>
+  Effect.gen(function* () {
+    const forkyard = yield* ForkyardClient
+    const worktree = yield* runningHere()
+    const name = yield* parseService(service)
+    yield* forkyard.Share({ id: worktree.id, service: name })
+    yield* Console.log(`${worktree.id} shares ${service} again whenever another worktree runs the same code`)
+  }).pipe(Effect.scoped, Effect.provide(client))
+).pipe(Command.withDescription("Undo own: share a service again when another worktree runs the same code"))
+
 const logs = Command.make("logs", { service: serviceArgument }, ({ service }) =>
   Effect.gen(function* () {
     const forkyard = yield* ForkyardClient
@@ -246,7 +256,7 @@ const update = Command.make("update", {}, () => Service.update).pipe(
 )
 
 const forkyard = Command.make("forkyard").pipe(
-  Command.withSubcommands([daemon, up, down, status, env, ownCommand, logs, attach, infraCommand, service, update])
+  Command.withSubcommands([daemon, up, down, status, env, ownCommand, shareCommand, logs, attach, infraCommand, service, update])
 )
 
 const messageOf = (error: unknown): string => {

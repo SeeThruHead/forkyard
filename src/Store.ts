@@ -76,6 +76,10 @@ const migrations = Migrator.fromRecord({
       last_used INTEGER NOT NULL,
       PRIMARY KEY (infra, instance, tenant, root)
     )`
+  }),
+  "10_pins": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE pins (worktree TEXT NOT NULL, service TEXT NOT NULL, PRIMARY KEY (worktree, service))`
   })
 })
 

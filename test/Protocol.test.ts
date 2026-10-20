@@ -8,7 +8,7 @@ import { ForkyardRpcs } from "../src/Protocol.ts"
 const fixture = (version: number, name: string): unknown =>
   JSON.parse(readFileSync(new URL(`./protocol/v${version}/${name}.json`, import.meta.url), "utf8"))
 
-const publicRpcs = ["Info", "Status", "Usage", "Up", "Down", "Restart", "Own", "Runs", "RunLog", "Env", "DaemonLogs", "Logs"]
+const publicRpcs = ["Info", "Status", "Usage", "Up", "Down", "Restart", "Own", "Share", "Runs", "RunLog", "Env", "DaemonLogs", "Logs"]
 
 describe("public protocol", () => {
   it("keeps every public RPC", () => {
