@@ -1,61 +1,36 @@
 import { describe, expect, it } from "@effect/vitest"
 import { codeHash } from "../src/Inputs.ts"
-import { InfraName, ServiceName } from "../src/Ids.ts"
-import { referencesOf, shareableInfra, shareableServices } from "../src/Sharing.ts"
-import type { InfraNode, ServiceNode, Worktree } from "../src/Stack.ts"
-
-const service = (name: string, after: ReadonlyArray<string> = [], uses: ReadonlyArray<string> = []): ServiceNode => ({
-  _tag: "Service",
-  name: ServiceName.make(name),
-  run: { shell: name },
-  cwd: ".",
-  env: {},
-  envFrom: [],
-  uses: uses.map((used) => InfraName.make(used)),
-  after: after.map((dependency) => ServiceName.make(dependency)),
-  ports: [],
-  exposure: { _tag: "Routed", health: "/health" },
-  lifecycle: { _tag: "LongRunning", ready: { _tag: "Healthy" }, onExit: "restart", watch: undefined }
-})
-
-const infra = (name: string) => ({ _tag: "Infra", spec: { name: InfraName.make(name) } }) as unknown as InfraNode
+import { referencesOf, withCalls } from "../src/Sharing.ts"
+import type { Worktree } from "../src/Stack.ts"
 
 const worktree = { domain: "feat.shop.localhost" } as Worktree
 
 describe("sharing", () => {
-  const services = [service("api", [], ["postgres"]), service("graph", [], ["postgres"]), service("app", ["api"]), service("admin")]
-  const same = { api: "a", graph: "c", app: "p", admin: "d" }
+  const own = { api: "a", graph: "c", app: "p", admin: "d" }
+  const calls = { app: ["api", "graph"], api: ["graph"] }
 
-  it("shares every service whose fingerprint and infra match the base", () => {
-    const shared = shareableServices({ services, infra: new Set(["postgres"]), mine: same, base: same, references: {} })
-    expect([...shared].sort()).toEqual(["admin", "api", "app", "graph"])
+  it("two worktrees with the same code get the same fingerprints", () => {
+    expect(withCalls(own, calls)).toEqual(withCalls({ ...own }, calls))
   })
 
-  it("a changed service runs its own copy, and so does everything that calls it", () => {
-    const shared = shareableServices({
-      services,
-      infra: new Set(["postgres"]),
-      mine: { ...same, graph: "changed" },
-      base: same,
-      references: { api: ["graph"], app: ["api"] }
-    })
-    expect([...shared].sort()).toEqual(["admin"])
+  it("changing a service changes the fingerprint of everything that calls it, and nothing else", () => {
+    const before = withCalls(own, calls)
+    const after = withCalls({ ...own, graph: "changed" }, calls)
+    expect(after.graph).not.toEqual(before.graph)
+    expect(after.api).not.toEqual(before.api)
+    expect(after.app).not.toEqual(before.app)
+    expect(after.admin).toEqual(before.admin)
   })
 
-  it("a service on infra the worktree does not share runs its own copy", () => {
-    const shared = shareableServices({ services, infra: new Set(), mine: same, base: same, references: {} })
-    expect([...shared].sort()).toEqual(["admin", "app"])
+  it("a service that calls something without a fingerprint has none either", () => {
+    const fingerprints = withCalls({ api: "a", app: "p" }, { app: ["api"], api: ["fake-auth"] })
+    expect(fingerprints).toEqual({})
   })
 
-  it("a service without a fingerprint is never shared", () => {
-    const shared = shareableServices({ services, infra: new Set(["postgres"]), mine: { api: "a" }, base: same, references: {} })
-    expect([...shared]).toEqual(["api"])
-  })
-
-  it("infra is shared when its fingerprint matches", () => {
-    expect([...shareableInfra([infra("postgres"), infra("redis")], { postgres: "1", redis: "2" }, { postgres: "1", redis: "3" })]).toEqual([
-      "postgres"
-    ])
+  it("services that call each other in a cycle still get stable fingerprints", () => {
+    const cyclic = { login: ["ui"], ui: ["login"] }
+    expect(withCalls({ login: "l", ui: "u" }, cyclic)).toEqual(withCalls({ login: "l", ui: "u" }, cyclic))
+    expect(withCalls({ login: "l", ui: "u2" }, cyclic).login).not.toEqual(withCalls({ login: "l", ui: "u" }, cyclic).login)
   })
 
   it("finds references to other services by hostname, not by substring", () => {

@@ -19,10 +19,9 @@ import {
 } from "effect"
 import { HttpClient } from "effect/http"
 import { daemonEnv, EnvResolver, owned, type OwnedEnv, telemetryDefaults } from "./Env.ts"
-import type { InfraName, Port, ServiceName, WorktreeId } from "./Ids.ts"
-import { ownerOfWorktree } from "./Ids.ts"
+import { BranchSlug, type InfraName, ownerOfWorktree, type Port, ServiceName, type WorktreeId, worktreeId } from "./Ids.ts"
 import { InfraManager } from "./InfraManager.ts"
-import { infraKey, instanceKey, Instances } from "./Instances.ts"
+import { type Found, instanceKey, Instances } from "./Instances.ts"
 import * as Metrics from "./Metrics.ts"
 import type { RunRef, ServiceState, ServiceView } from "./Model.ts"
 import { plan } from "./Plan.ts"
@@ -30,7 +29,7 @@ import { allocatePort } from "./Ports.ts"
 import { Proc, type Spawned } from "./Proc.ts"
 import { pollUntilReady, unlessItExits } from "./Readiness.ts"
 import { Router } from "./Router.ts"
-import { reasonsNotShared, shareableInfra, shareableServices, Sharing } from "./Sharing.ts"
+import { Sharing } from "./Sharing.ts"
 import {
   hostOf,
   InfraError,
@@ -48,8 +47,8 @@ import {
 import { Status } from "./Status.ts"
 import { changesUnder } from "./Watch.ts"
 
-export class BaseGone extends Schema.TaggedError<BaseGone>()("BaseGone", {
-  base: Schema.String
+export class LenderGone extends Schema.TaggedError<LenderGone>()("LenderGone", {
+  service: Schema.String
 }) {}
 
 export class DependencyFailed extends Schema.TaggedError<DependencyFailed>()("DependencyFailed", {
@@ -132,7 +131,7 @@ const readyLineOf = (service: ServiceNode) =>
 export class Supervisor extends Context.Service<
   Supervisor,
   {
-    readonly run: (stack: Stack, worktree: Worktree, base: Worktree | undefined) => Effect.Effect<never, unknown, Scope.Scope>
+    readonly run: (stack: Stack, worktree: Worktree) => Effect.Effect<never, unknown, Scope.Scope>
     readonly restart: (id: WorktreeId, service: ServiceName) => Effect.Effect<void>
     readonly infraAction: (id: WorktreeId, infra: InfraName, action: string) => Effect.Effect<string, InfraError>
   }
@@ -148,6 +147,7 @@ export class Supervisor extends Context.Service<
         const infra = yield* InfraManager
         const instances = yield* Instances
         const sharing = yield* Sharing
+        const decisions = yield* Semaphore.make(1)
         const proc = yield* Proc
         const router = yield* Router
         const status = yield* Status
@@ -267,31 +267,45 @@ export class Supervisor extends Context.Service<
             )
         )
 
-        const publishedBy = (owner: Worktree | undefined, names: ReadonlyArray<string>, keyOf: (id: WorktreeId, name: string) => string) =>
-          Effect.forEach(names, (name) =>
-            owner
-              ? instances.get(keyOf(owner.id, name)).pipe(Effect.map((instance) => [name, instance?.fingerprint] as const))
-              : Effect.succeed([name, undefined] as const)
-          ).pipe(
-            Effect.map((entries): Readonly<Record<string, string>> =>
-              Object.fromEntries(entries.flatMap(([name, fingerprint]) => (fingerprint ? [[name, fingerprint] as const] : [])))
-            )
-          )
+        const tenantFor = (worktree: Worktree, fingerprint: string | undefined): Worktree => {
+          if (!fingerprint) return worktree
+          const branch = BranchSlug.make(`shared-${fingerprint.slice(0, 10)}`)
+          const id = worktreeId(branch, worktree.project)
+          return { ...worktree, id, branch, domain: `${id}.${worktree.domain.slice(worktree.id.length + 1)}` }
+        }
 
-        const publish = (
+        const publishOwn = (worktree: Worktree, name: string, fingerprint: string | undefined) =>
+          fingerprint
+            ? instances.publish(instanceKey(worktree.id, name), { fingerprint, owner: worktree.id, port: undefined })
+            : Effect.void
+
+        const claim = Effect.fnUntraced(function* (
           worktree: Worktree,
-          fingerprints: Readonly<Record<string, string>>,
-          keyOf: (id: WorktreeId, name: string) => string
-        ) =>
-          Effect.forEach(
-            Object.entries(fingerprints),
-            ([name, fingerprint]) => instances.publish(keyOf(worktree.id, name), { fingerprint, port: undefined }),
-            {
-              discard: true
-            }
+          services: ReadonlyArray<ServiceNode>,
+          fingerprints: Readonly<Record<string, string>>
+        ) {
+          const found = yield* Effect.forEach(services, (service) => {
+            const fingerprint = fingerprints[service.name]
+            return fingerprint
+              ? instances.find(fingerprint, worktree.id).pipe(Effect.map((match) => [service.name, match] as const))
+              : Effect.succeed([service.name, undefined] as const)
+          })
+          const lenders = Object.fromEntries(found.flatMap(([name, match]) => (match ? [[name, match] as const] : [])))
+          yield* Effect.forEach(
+            services.filter((service) => !lenders[service.name]),
+            (service) => publishOwn(worktree, service.name, fingerprints[service.name]),
+            { discard: true }
           )
+          return lenders as Readonly<Record<string, Found>>
+        })
 
-        const prepare = Effect.fn("Supervisor.prepare")(function* (stack: Stack, worktree: Worktree, base: Worktree | undefined) {
+        const describeSharing = (worktree: Worktree, services: ReadonlyArray<ServiceNode>, lenders: Readonly<Record<string, Found>>) => {
+          const owners = [...new Set(Object.values(lenders).map((found) => found.instance.owner))]
+          const own = services.filter((service) => !lenders[service.name]).map((service) => service.name)
+          return `${worktree.id} shares ${Object.keys(lenders).length} of ${services.length} services${owners.length > 0 ? ` (running under ${owners.join(", ")})` : ""}; runs its own: ${own.join(", ") || "nothing"}`
+        }
+
+        const prepare = Effect.fn("Supervisor.prepare")(function* (stack: Stack, worktree: Worktree) {
           yield* Effect.annotateCurrentSpan(worktreeAttributes(worktree))
 
           const nodes = yield* stack.build(worktree)
@@ -301,55 +315,24 @@ export class Supervisor extends Context.Service<
           const session = stack.inputs ? yield* sharing.session(stack.inputs, worktree) : undefined
 
           const infraFingerprints = session ? yield* session.infra(infraNodes) : {}
-          const sharedInfra = shareableInfra(
+          const leases = yield* Effect.forEach(
             infraNodes,
-            infraFingerprints,
-            yield* publishedBy(
-              base,
-              infraNodes.map((node) => node.spec.name),
-              infraKey
-            )
+            (node) => acquireInfra(worktree, node.spec, tenantFor(worktree, infraFingerprints[node.spec.name])),
+            { concurrency: "unbounded" }
           )
-          yield* publish(worktree, infraFingerprints, infraKey)
-
-          const tenantFor = (spec: InfraSpec) => (base && sharedInfra.has(spec.name) ? base : worktree)
-          const leases = yield* Effect.forEach(infraNodes, (node) => acquireInfra(worktree, node.spec, tenantFor(node.spec)), {
-            concurrency: "unbounded"
-          })
           const infraEnv = Object.fromEntries(leases) as InfraEnv
 
-          const measured = session
+          const fingerprints = session
             ? yield* session.services({
                 services,
                 infra: infraFingerprints,
-                base,
                 envOf: (service) => resolveEnv(worktree, service, ownedEnvFor(service, infraEnv), undefined)
               })
-            : { fingerprints: {}, references: {} }
-          const sharingInput = {
-            services,
-            infra: sharedInfra,
-            mine: measured.fingerprints,
-            base: yield* publishedBy(
-              base,
-              services.map((service) => service.name),
-              instanceKey
-            ),
-            references: measured.references
-          }
-          const shared = shareableServices(sharingInput)
-          yield* publish(
-            worktree,
-            Object.fromEntries(Object.entries(measured.fingerprints).filter(([name]) => !shared.has(name))),
-            instanceKey
-          )
-          const notShared = Object.entries(reasonsNotShared(sharingInput, shared)).map(([name, reason]) => `${name} (${reason})`)
-          if (base)
-            yield* Effect.logInfo(
-              `${worktree.id} shares ${shared.size} of ${services.length} services and ${sharedInfra.size} infra with ${base.id}; runs its own: ${notShared.join(", ")}`
-            )
+            : {}
+          const lenders = yield* decisions.withPermits(1)(claim(worktree, services, fingerprints))
+          if (session) yield* Effect.logInfo(describeSharing(worktree, services, lenders))
 
-          return { services, infraEnv, shared }
+          return { services, infraEnv, lenders, fingerprints }
         })
 
         const readinessOf = (services: ReadonlyArray<ServiceNode>) =>
@@ -579,63 +562,63 @@ export class Supervisor extends Context.Service<
           return apply
         }
 
-        const followState = (worktree: Worktree, service: ServiceNode, base: Worktree, ready: Ready) =>
+        const lenderName = (found: Found) => ServiceName.make(found.key.slice(found.instance.owner.length + 1))
+
+        const followState = (worktree: Worktree, service: ServiceNode, found: Found, ready: Ready) =>
           status.changes.pipe(
-            Stream.map((snapshot) => snapshot[base.id]?.services[service.name]?.state),
+            Stream.map((snapshot) => snapshot[found.instance.owner]?.services[lenderName(found)]?.state),
             Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
-            Stream.runForEach((state) => (state ? mirror(worktree, service, ready)(state) : Effect.fail(new BaseGone({ base: base.id }))))
+            Stream.runForEach((state) =>
+              state ? mirror(worktree, service, ready)(state) : Effect.fail(new LenderGone({ service: service.name }))
+            )
           )
 
         const routeTo = (worktree: Worktree, service: ServiceNode, port: Port) =>
           Stream.scoped(Stream.fromEffect(router.expose({ host: hostOf(worktree, service.name), port })).pipe(Stream.concat(Stream.never)))
 
-        const followRoute = (worktree: Worktree, service: ServiceNode, base: Worktree) => {
+        const followRoute = (worktree: Worktree, service: ServiceNode, found: Found) => {
           if (service.exposure._tag !== "Routed") return Effect.never
-          return instances.watch(instanceKey(base.id, service.name)).pipe(
+          return instances.watch(found.key).pipe(
             Stream.switchMap((instance) => {
-              if (!instance) return Stream.fail(new BaseGone({ base: base.id }))
+              if (!instance) return Stream.fail(new LenderGone({ service: service.name }))
               return instance.port ? routeTo(worktree, service, instance.port) : Stream.empty
             }),
             Stream.runDrain
           )
         }
 
-        const superviseShared = Effect.fnUntraced(function* (
-          worktree: Worktree,
-          service: ServiceNode,
-          base: Worktree,
-          readiness: Readiness
-        ) {
-          yield* status.service(worktree.id, service.name, { ...viewOf(worktree, service, { _tag: "Waiting" }), sharedWith: base.id })
-          yield* Effect.all([followState(worktree, service, base, readiness[service.name]!), followRoute(worktree, service, base)], {
+        const borrow = Effect.fnUntraced(function* (worktree: Worktree, service: ServiceNode, found: Found, readiness: Readiness) {
+          yield* status.service(worktree.id, service.name, {
+            ...viewOf(worktree, service, { _tag: "Waiting" }),
+            sharedWith: found.instance.owner
+          })
+          yield* Effect.all([followState(worktree, service, found, readiness[service.name]!), followRoute(worktree, service, found)], {
             concurrency: 2,
             discard: true
           })
         })
 
-        const run = Effect.fnUntraced(function* (
-          stack: Stack,
-          worktree: Worktree,
-          base: Worktree | undefined
-        ): Effect.fn.Return<never, unknown, Scope.Scope> {
-          const { services, infraEnv, shared } = yield* prepare(stack, worktree, base)
+        const run = Effect.fnUntraced(function* (stack: Stack, worktree: Worktree): Effect.fn.Return<never, unknown, Scope.Scope> {
+          const { services, infraEnv, lenders, fingerprints } = yield* prepare(stack, worktree)
           const readiness = yield* readinessOf(services)
-          const baseLost = yield* Deferred.make<void>()
-          const loseBase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-            effect.pipe(Effect.catch((error) => (error instanceof BaseGone ? Deferred.succeed(baseLost, undefined) : Effect.fail(error))))
+          const own = (service: ServiceNode) => supervise(worktree, service, infraEnv, readiness)
+          const takeOver = (service: ServiceNode) =>
+            Effect.logInfo(`${worktree.id}/${service.name} lost the instance it shared; starting its own`).pipe(
+              Effect.andThen(publishOwn(worktree, service.name, fingerprints[service.name])),
+              Effect.andThen(own(service))
+            )
+          const shareOrOwn = (service: ServiceNode) => {
+            const found = lenders[service.name]
+            if (!found) return own(service)
+            return borrow(worktree, service, found, readiness).pipe(
+              Effect.catch((error) => (error instanceof LenderGone ? takeOver(service) : Effect.fail(error)))
+            )
+          }
 
           yield* Effect.addFinalizer(() => env.forget(worktree.id))
-          yield* Effect.forEach(
-            services,
-            (service) =>
-              base && shared.has(service.name)
-                ? superviseShared(worktree, service, base, readiness).pipe(loseBase, Effect.forkScoped)
-                : supervise(worktree, service, infraEnv, readiness).pipe(Effect.forkScoped),
-            { discard: true }
-          )
+          yield* Effect.forEach(services, (service) => shareOrOwn(service).pipe(Effect.forkScoped), { discard: true })
 
-          yield* Deferred.await(baseLost)
-          return yield* new BaseGone({ base: base?.id ?? "" })
+          return yield* Effect.never
         })
 
         return Supervisor.of({

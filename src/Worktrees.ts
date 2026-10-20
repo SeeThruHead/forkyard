@@ -1,4 +1,4 @@
-import { Cause, Clock, Context, Effect, Exit, FiberMap, Latch, Layer, Metric, Option, Record, Ref, Schema, Stream } from "effect"
+import { Cause, Clock, Context, Effect, Exit, FiberMap, Latch, Layer, Metric, Option, Schema } from "effect"
 import { type AbsolutePath, branchSlug, type WorktreeId, worktreeId } from "./Ids.ts"
 import { ProxyAddress } from "./ProxyAddress.ts"
 import * as Metrics from "./Metrics.ts"
@@ -6,7 +6,7 @@ import { ForkyardError } from "./Protocol.ts"
 import { type DesiredWorktree, Registry } from "./Registry.ts"
 import type { Stack, Worktree } from "./Stack.ts"
 import { Status } from "./Status.ts"
-import { BaseGone, Supervisor } from "./Supervisor.ts"
+import { Supervisor } from "./Supervisor.ts"
 
 export type UpRequest = {
   readonly root: AbsolutePath
@@ -59,7 +59,6 @@ export class Worktrees extends Context.Service<
         const status = yield* Status
         const registry = yield* Registry
         const running = yield* FiberMap.make<WorktreeId>()
-        const launched = yield* Ref.make<Readonly<Record<WorktreeId, Worktree>>>({})
         const booted = yield* Latch.make(false)
 
         const recordRunning = FiberMap.size(running).pipe(Effect.flatMap((count) => Metric.update(Metrics.worktreesRunning, count)))
@@ -98,48 +97,12 @@ export class Worktrees extends Context.Service<
           return status.clear(id)
         }
 
-        const isBaseFor = (worktree: Worktree) => (other: Worktree) =>
-          other.project === worktree.project && other.branch === "main" && other.id !== worktree.id
-
-        const baseFor = (worktree: Worktree) => Ref.get(launched).pipe(Effect.map((all) => Object.values(all).find(isBaseFor(worktree))))
-
-        const prepared = (base: Worktree) =>
-          status.changes.pipe(
-            Stream.map((snapshot) => snapshot[base.id]),
-            Stream.filter((view) => view === undefined || Object.keys(view.services).length > 0),
-            Stream.runHead,
-            Effect.map((head) => Option.isSome(head) && head.value !== undefined),
-            Effect.timeoutOption("10 minutes"),
-            Effect.map(Option.getOrElse(() => false))
-          )
-
-        const usableBase = (worktree: Worktree) =>
-          baseFor(worktree).pipe(
-            Effect.flatMap((base) =>
-              base ? prepared(base).pipe(Effect.map((ready) => (ready ? base : undefined))) : Effect.succeed(undefined)
-            )
-          )
-
-        const runFrom = (stack: Stack, worktree: Worktree) => (base: Worktree | undefined) =>
-          supervisor.run(stack, worktree, base).pipe(
-            Effect.scoped,
-            Effect.catch((error) =>
-              error instanceof BaseGone
-                ? Effect.logWarning(`${error.base} stopped; ${worktree.id} now runs everything itself`).pipe(
-                    Effect.andThen(supervisor.run(stack, worktree, undefined).pipe(Effect.scoped))
-                  )
-                : Effect.fail(error)
-            )
-          )
-
         const launch = (stack: Stack, worktree: Worktree) =>
           FiberMap.run(running, worktree.id, { onlyIfMissing: true })(
-            Ref.update(launched, Record.set(worktree.id, worktree)).pipe(
-              Effect.andThen(usableBase(worktree)),
-              Effect.flatMap(runFrom(stack, worktree)),
+            supervisor.run(stack, worktree).pipe(
+              Effect.scoped,
               Effect.tapCause((cause) => Effect.logError(`worktree ${worktree.id} stopped`, cause)),
               Effect.onExit(clearUnlessFailed(worktree.id)),
-              Effect.ensuring(Ref.update(launched, Record.remove(worktree.id))),
               Effect.ensuring(recordRunning)
             )
           )

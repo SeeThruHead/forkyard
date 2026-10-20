@@ -17,56 +17,28 @@ export const referencesOf = (env: Readonly<Record<string, string>>, worktree: Wo
   })
 }
 
-const usesOwnInfra = (service: ServiceNode, infra: ReadonlySet<string>) => service.uses.some((name) => !infra.has(name))
+type Fingerprints = Readonly<Record<string, string>>
 
-const dependsOnOwn = (dependencies: ReadonlyArray<string>, own: ReadonlySet<string>) => dependencies.some((name) => own.has(name))
+const unknownCallees = (fingerprints: Fingerprints, calls: Readonly<Record<string, ReadonlyArray<string>>>) =>
+  Object.keys(fingerprints).filter((name) => (calls[name] ?? []).some((callee) => fingerprints[callee] === undefined))
 
-const grow = (
-  services: ReadonlyArray<ServiceNode>,
-  dependencies: Readonly<Record<string, ReadonlyArray<string>>>,
-  own: ReadonlySet<string>
-): ReadonlySet<string> => {
-  const more = services.filter((service) => !own.has(service.name) && dependsOnOwn(dependencies[service.name] ?? [], own))
-  if (more.length === 0) return own
-  return grow(services, dependencies, new Set([...own, ...more.map((service) => service.name)]))
+const withoutUnknownCallees = (fingerprints: Fingerprints, calls: Readonly<Record<string, ReadonlyArray<string>>>): Fingerprints => {
+  const unknown = unknownCallees(fingerprints, calls)
+  if (unknown.length === 0) return fingerprints
+  return withoutUnknownCallees(Object.fromEntries(Object.entries(fingerprints).filter(([name]) => !unknown.includes(name))), calls)
 }
 
-export const shareableInfra = (
-  infra: ReadonlyArray<InfraNode>,
-  mine: Readonly<Record<string, string>>,
-  base: Readonly<Record<string, string>>
-) => new Set(infra.map((node) => node.spec.name).filter((name) => mine[name] !== undefined && mine[name] === base[name]))
-
-export const shareableServices = (options: {
-  readonly services: ReadonlyArray<ServiceNode>
-  readonly infra: ReadonlySet<string>
-  readonly mine: Readonly<Record<string, string>>
-  readonly base: Readonly<Record<string, string>>
-  readonly references: Readonly<Record<string, ReadonlyArray<string>>>
-}): ReadonlySet<string> => {
-  const matches = (name: string) => options.mine[name] !== undefined && options.mine[name] === options.base[name]
-  const direct = options.services.filter((service) => !matches(service.name) || usesOwnInfra(service, options.infra))
-  const dependencies = Object.fromEntries(options.services.map((service) => [service.name, options.references[service.name] ?? []]))
-  const own = grow(options.services, dependencies, new Set(direct.map((service) => service.name)))
-  return new Set(options.services.map((service) => service.name).filter((name) => !own.has(name)))
+export const withCalls = (own: Fingerprints, calls: Readonly<Record<string, ReadonlyArray<string>>>): Fingerprints => {
+  const known = withoutUnknownCallees(own, calls)
+  const step = (current: Fingerprints): Fingerprints =>
+    Object.fromEntries(
+      Object.entries(known).map(([name, fingerprint]) => [
+        name,
+        combine(fingerprint, ...(calls[name] ?? []).map((callee) => current[callee] ?? "").sort())
+      ])
+    )
+  return Array.from({ length: Object.keys(known).length }).reduce<Fingerprints>((current) => step(current), known)
 }
-
-export const reasonsNotShared = (options: Parameters<typeof shareableServices>[0], shared: ReadonlySet<string>) =>
-  Object.fromEntries(
-    options.services
-      .filter((service) => !shared.has(service.name))
-      .map((service) => {
-        const mine = options.mine[service.name]
-        const base = options.base[service.name]
-        if (mine === undefined) return [service.name, "no inputs"] as const
-        if (base === undefined) return [service.name, "base does not run it"] as const
-        if (mine !== base) return [service.name, "changed"] as const
-        const infra = service.uses.filter((name) => !options.infra.has(name))
-        if (infra.length > 0) return [service.name, `uses own ${infra.join(", ")}`] as const
-        const calls = (options.references[service.name] ?? []).filter((name) => !shared.has(name))
-        return [service.name, `calls own ${calls.join(", ")}`] as const
-      })
-  )
 
 const runText = (run: Run) => ("shell" in run ? run.shell : [run.command, ...run.args].join(" "))
 
@@ -84,10 +56,7 @@ const serviceFingerprint = (
   return combine(hash, runText(service.run), service.cwd, service.lifecycle._tag, envHash(normalized, domains, ignored), ...usedInfra)
 }
 
-export type ServiceFingerprints = {
-  readonly fingerprints: Readonly<Record<string, string>>
-  readonly references: Readonly<Record<string, ReadonlyArray<string>>>
-}
+export type ServiceFingerprints = Readonly<Record<string, string>>
 
 export type Session = {
   readonly infra: (infra: ReadonlyArray<InfraNode>) => Effect.Effect<Readonly<Record<string, string>>, InputsError>
@@ -95,7 +64,6 @@ export type Session = {
     readonly services: ReadonlyArray<ServiceNode>
     readonly infra: Readonly<Record<string, string>>
     readonly envOf: (service: ServiceNode) => Effect.Effect<Readonly<Record<string, string>>, unknown>
-    readonly base: Worktree | undefined
   }) => Effect.Effect<ServiceFingerprints, unknown>
 }
 
@@ -153,19 +121,7 @@ export class Sharing extends Context.Service<
             resolved.flatMap(({ service, hash, env }) =>
               hash === undefined
                 ? []
-                : [
-                    [
-                      service.name,
-                      serviceFingerprint(
-                        worktree,
-                        [worktree.domain, ...(options.base ? [options.base.domain] : [])],
-                        service,
-                        hash,
-                        env,
-                        options.infra
-                      )
-                    ] as const
-                  ]
+                : [[service.name, serviceFingerprint(worktree, [worktree.domain], service, hash, env, options.infra)] as const]
             )
           )
           const references = Object.fromEntries(
@@ -178,7 +134,7 @@ export class Sharing extends Context.Service<
               )
             ])
           )
-          return { fingerprints, references } satisfies ServiceFingerprints
+          return withCalls(fingerprints, references) satisfies ServiceFingerprints
         })
 
         return { infra, services } satisfies Session

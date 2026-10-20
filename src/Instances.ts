@@ -1,18 +1,18 @@
-import { Context, Effect, Equal, Layer, Record, type Scope, Stream, SubscriptionRef } from "effect"
+import { Context, Effect, Layer, Record, type Scope, Stream, SubscriptionRef } from "effect"
 import type { Port, WorktreeId } from "./Ids.ts"
 
-export type Instance = { readonly fingerprint: string; readonly port: Port | undefined }
+export type Instance = { readonly fingerprint: string; readonly owner: WorktreeId; readonly port: Port | undefined }
+
+export type Found = { readonly key: string; readonly instance: Instance }
 
 export const instanceKey = (id: WorktreeId, name: string) => `${id}/${name}`
-
-export const infraKey = (id: WorktreeId, name: string) => `${id}/infra:${name}`
 
 export class Instances extends Context.Service<
   Instances,
   {
     readonly publish: (key: string, instance: Instance) => Effect.Effect<void, never, Scope.Scope>
     readonly setPort: (key: string, port: Port | undefined) => Effect.Effect<void>
-    readonly get: (key: string) => Effect.Effect<Instance | undefined>
+    readonly find: (fingerprint: string, besides: WorktreeId) => Effect.Effect<Found | undefined>
     readonly watch: (key: string) => Stream.Stream<Instance | undefined>
   }
 >()("forkyard/Instances") {
@@ -33,15 +33,21 @@ export class Instances extends Context.Service<
           return { ...all, [key]: { ...current, port } }
         })
 
-      const get = (key: string) => SubscriptionRef.get(state).pipe(Effect.map((all) => all[key]))
+      const find = (fingerprint: string, besides: WorktreeId) =>
+        SubscriptionRef.get(state).pipe(
+          Effect.map((all) => {
+            const match = Object.entries(all).find(([, instance]) => instance.fingerprint === fingerprint && instance.owner !== besides)
+            return match ? { key: match[0], instance: match[1] } : undefined
+          })
+        )
 
       const watch = (key: string) =>
         SubscriptionRef.changes(state).pipe(
           Stream.map((all) => all[key]),
-          Stream.changesWith((a, b) => Equal.equals(a?.fingerprint, b?.fingerprint) && a?.port === b?.port)
+          Stream.changesWith((a, b) => a?.fingerprint === b?.fingerprint && a?.port === b?.port)
         )
 
-      return Instances.of({ publish, setPort, get, watch })
+      return Instances.of({ publish, setPort, find, watch })
     })
   )
 }
