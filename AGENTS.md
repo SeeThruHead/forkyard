@@ -20,7 +20,16 @@ Forkyard runs on Node 24+ or Bun, and is installed twice: globally for the comma
 2. `bin/forkyard.ts` hands over to the repo's own forkyard when the current folder has one in `node_modules`, passing the runtime along, so a repo always runs the version it pinned. `daemon`, `service` and `update` never hand over: one daemon serves every repo.
 3. `bin/cli.ts` is the CLI.
 
-A config imports `forkyard` and `effect` from its repo's `node_modules`, like any other package; the daemon loads it with a plain `import()`. Two things differ by runtime: the SQLite driver in `src/Store.ts` (chosen by `src/platform/Runtime.ts`), and restarting a foreground daemon after an upgrade in `src/platform/Os.ts`, which replaces the process on Node and runs a fresh one on Bun, which has no `execve`.
+A config imports `forkyard` and `effect` from its repo's `node_modules`, like any other package; the daemon loads it with a plain `import()`. Two things differ by runtime: the SQLite driver in `src/Database.ts` (chosen by `src/platform/Runtime.ts`), and restarting a foreground daemon after an upgrade in `src/platform/Os.ts`, which replaces the process on Node and runs a fresh one on Bun, which has no `execve`.
+
+## The daemon's database
+
+The daemon keeps its own state in one SQLite file in its home directory. `src/Database.ts` only opens that file and holds the ordered list of schema changes, which run in sequence at startup. Each table has exactly one module that reads and writes it, and nothing else touches it:
+
+- `worktrees`, `processes`: `src/Registry.ts`
+- `runs`, `log_lines`: `src/Runs.ts`
+- `infra_tenants`: `src/Tenants.ts`
+- `pins`: `src/Pins.ts`
 
 ## What the linter enforces
 
@@ -37,6 +46,7 @@ These need judgment, so they are not lint rules.
 - Branded types for values that are not really strings or numbers: ids, names that become hostnames, ports, pids, paths. Use the schemas in `src/Ids.ts` and their smart constructors; add one there before passing a bare `string` or `number` around.
 - Single level of abstraction. A function reads at one level: an orchestration step calls named steps and does not also build SQL, parse ports or format strings inline. This is about what a function mixes, not how long it is.
 - Service methods stay small enough to read in one screen. Split by responsibility, not to hit a number.
+- A new table gets one owning module, listed above.
 
 ## The public protocol
 

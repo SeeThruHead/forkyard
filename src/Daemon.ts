@@ -31,7 +31,7 @@ import { Registry } from "./Registry.ts"
 import { Router } from "./Router.ts"
 import { Runs } from "./Runs.ts"
 import { Status } from "./Status.ts"
-import * as Store from "./Store.ts"
+import * as Database from "./Database.ts"
 import { Supervisor } from "./Supervisor.ts"
 import { Tenants } from "./Tenants.ts"
 import { Pins } from "./Pins.ts"
@@ -155,7 +155,7 @@ export const layer = (options: DaemonOptions) => {
     Registry.layer,
     Runs.layer,
     Router.layer({ file: `${options.traefikDir}/forkyard.yml`, upstreamHost: options.upstreamHost, hostsFile: options.hostsFile })
-  ).pipe(Layer.provideMerge(Store.layer(options.stateFile)), Layer.provideMerge(Platform.layer))
+  ).pipe(Layer.provideMerge(Database.layer(options.stateFile)), Layer.provideMerge(Platform.layer))
 
   const processes = Proc.layer({ otlpUrl }).pipe(Layer.provideMerge(records))
 

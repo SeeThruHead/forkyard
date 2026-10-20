@@ -1,7 +1,7 @@
 import { Box, Text, useInput } from "ink"
 import { type ReactNode, useMemo, useState } from "react"
 import type { EnvVar, InfraView, ServiceView, UsageMap, WorktreeView } from "../src/Model.ts"
-import { runOf, serviceUrl } from "../src/Model.ts"
+import { runOf, serviceUrl, viewLabel } from "../src/Model.ts"
 import { keyOfInfra, type Line, type Logs, separator } from "./Feeds.ts"
 import { ButtonBar } from "./ButtonBar.tsx"
 import { clickedButton, isClick, isMouseInput, isWheel, isWheelDown, type Mouse, place, useMouse } from "./Mouse.ts"
@@ -56,7 +56,7 @@ const lookOf = (entry: Entry): Look => {
   if (entry._tag === "Processes") return { label: "processes", icon: "▦", color: theme.accent, state: "" }
   if (entry._tag === "Daemon") return { label: "forkyard", icon: "⚙", color: theme.muted, state: "daemon" }
   if (entry._tag === "Infra") return { label: entry.name, icon: "◇", color: stateColor(entry.view._tag), state: entry.view.scope }
-  return { label: entry.name, icon: "●", color: stateColor(entry.view.state._tag), state: entry.view.state._tag.toLowerCase() }
+  return { label: entry.name, icon: "●", color: stateColor(entry.view.state._tag), state: viewLabel(entry.view) }
 }
 
 const pad = (text: string, width: number) => (text.length > width ? `${text.slice(0, width - 1)}…` : text.padEnd(width))
@@ -143,7 +143,7 @@ const ServiceLine = ({ name, view, usage }: { readonly name: string; readonly vi
     <Text wrap="truncate">
       <Text color={shared ? theme.shared : theme.text}>{pad(name, 22)}</Text>
       <Text color={theme.muted}>{pad(view._tag.toLowerCase(), 8)}</Text>
-      <Text color={shared ? theme.shared : stateColor(view.state._tag)}>{pad(view.state._tag.toLowerCase(), 12)}</Text>
+      <Text color={shared ? theme.shared : stateColor(view.state._tag)}>{pad(viewLabel(view), 12)}</Text>
       <Text color={theme.muted}>{pad(run ? `#${run.run}` : "", 6)}</Text>
       <Text color={theme.muted}>{pad(run ? String(run.pid) : "", 8)}</Text>
       <Text color={figures}>{pad(formatCpu(use), 7)}</Text>
