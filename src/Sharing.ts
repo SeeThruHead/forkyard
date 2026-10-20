@@ -55,6 +55,20 @@ export const withCalls = (own: Fingerprints, calls: Readonly<Record<string, Read
   return Array.from({ length: Object.keys(known).length }).reduce<Fingerprints>((current) => step(current), known)
 }
 
+const isTask = (service: ServiceNode) => service.lifecycle._tag === "RunOnce"
+
+const tasksNeededHere = (services: ReadonlyArray<ServiceNode>, shared: ReadonlySet<string>) =>
+  services
+    .filter((service) => !shared.has(service.name))
+    .flatMap((service) => service.after)
+    .filter((name) => shared.has(name) && services.some((service) => service.name === name && isTask(service)))
+
+export const sharedTasksAllowed = (services: ReadonlyArray<ServiceNode>, shared: ReadonlySet<string>): ReadonlySet<string> => {
+  const needed = tasksNeededHere(services, shared)
+  if (needed.length === 0) return shared
+  return sharedTasksAllowed(services, new Set([...shared].filter((name) => !needed.some((task) => task === name))))
+}
+
 const runText = (run: Run) => ("shell" in run ? run.shell : [run.command, ...run.args].join(" "))
 
 const serviceFingerprint = (

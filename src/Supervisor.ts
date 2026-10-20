@@ -29,7 +29,7 @@ import { allocatePort } from "./Ports.ts"
 import { Proc, type Spawned } from "./Proc.ts"
 import { pollUntilReady, unlessItExits } from "./Readiness.ts"
 import { Router } from "./Router.ts"
-import { Sharing } from "./Sharing.ts"
+import { sharedTasksAllowed, Sharing } from "./Sharing.ts"
 import {
   hostOf,
   InfraError,
@@ -290,7 +290,9 @@ export class Supervisor extends Context.Service<
               ? instances.find(fingerprint, worktree.id).pipe(Effect.map((match) => [service.name, match] as const))
               : Effect.succeed([service.name, undefined] as const)
           })
-          const lenders = Object.fromEntries(found.flatMap(([name, match]) => (match ? [[name, match] as const] : [])))
+          const matched = Object.fromEntries(found.flatMap(([name, match]) => (match ? [[name, match] as const] : [])))
+          const keep = sharedTasksAllowed(services, new Set(Object.keys(matched)))
+          const lenders = Object.fromEntries(Object.entries(matched).filter(([name]) => keep.has(name)))
           yield* Effect.forEach(
             services.filter((service) => !lenders[service.name]),
             (service) => publishOwn(worktree, service.name, fingerprints[service.name]),
@@ -453,7 +455,7 @@ export class Supervisor extends Context.Service<
           const restarting = shouldRestart(onExit, outcome)
           yield* markEnded(worktree, service, spawned.run, outcome, restarting)
 
-          return restarting
+          return { again: restarting, crashed: outcome._tag === "Exited" && outcome.code !== 0 }
         }, Effect.scoped)
 
         const keepRunning = Effect.fnUntraced(function* (
@@ -468,7 +470,7 @@ export class Supervisor extends Context.Service<
 
           const attempt = (failures: number): Effect.Effect<void> =>
             runLongRunning(worktree, service, lifecycle.onExit, ownedEnv, ready, nextChange).pipe(
-              Effect.map((again): Attempt => ({ again, failures: 0 })),
+              Effect.map(({ again, crashed }): Attempt => ({ again, failures: crashed ? failures + 1 : 0 })),
               Effect.catchCause((cause) => failed(cause).pipe(Effect.as<Attempt>({ again: true, failures: failures + 1 }))),
               Effect.flatMap((next) =>
                 next.again ? Effect.sleep(restartDelay(next.failures)).pipe(Effect.andThen(attempt(next.failures))) : Effect.void
