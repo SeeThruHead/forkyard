@@ -97,13 +97,19 @@ export type Session = {
     readonly infra: Readonly<Record<string, string>>
     readonly envOf: (service: ServiceNode) => Effect.Effect<Readonly<Record<string, string>>, unknown>
   }) => Effect.Effect<ServiceFingerprints, unknown>
-  readonly refresh: Effect.Effect<Readonly<Record<string, string>>, unknown>
+  readonly refresh: Effect.Effect<Refreshed, unknown>
+}
+
+export type Refreshed = {
+  readonly infra: Readonly<Record<string, string>>
+  readonly services: Readonly<Record<string, string>>
 }
 
 type Measured = {
   readonly resolved: ReadonlyArray<{ readonly service: ServiceNode; readonly env: Readonly<Record<string, string>> }>
   readonly references: Readonly<Record<string, ReadonlyArray<string>>>
   readonly infra: Readonly<Record<string, string>>
+  readonly infraNodes: ReadonlyArray<InfraNode>
 }
 
 export class Sharing extends Context.Service<
@@ -140,16 +146,19 @@ export class Sharing extends Context.Service<
           )
         const measured = yield* Ref.make<Measured | undefined>(undefined)
 
+        const infraFrom = (snapshot: Snapshot, nodes: ReadonlyArray<InfraNode>) =>
+          Effect.forEach(nodes, (node) =>
+            codeWith(snapshot)({ name: node.spec.name, kind: "infra" }).pipe(
+              Effect.map((hash) => [node.spec.name, combine(node.spec.name, hash ?? "default")] as const)
+            )
+          ).pipe(Effect.map((entries): Readonly<Record<string, string>> => Object.fromEntries(entries)))
+
+        const infraNodes = yield* Ref.make<ReadonlyArray<InfraNode>>([])
+
         const infra = (nodes: ReadonlyArray<InfraNode>) =>
-          takeSnapshot.pipe(
-            Effect.flatMap((snapshot) =>
-              Effect.forEach(nodes, (node) =>
-                codeWith(snapshot)({ name: node.spec.name, kind: "infra" }).pipe(
-                  Effect.map((hash) => [node.spec.name, combine(node.spec.name, hash ?? "default")] as const)
-                )
-              )
-            ),
-            Effect.map((entries): Readonly<Record<string, string>> => Object.fromEntries(entries))
+          Ref.set(infraNodes, nodes).pipe(
+            Effect.andThen(takeSnapshot),
+            Effect.flatMap((snapshot) => infraFrom(snapshot, nodes))
           )
 
         const fingerprintsFrom = Effect.fnUntraced(function* (snapshot: Snapshot, state: Measured) {
@@ -195,16 +204,18 @@ export class Sharing extends Context.Service<
           const unexplained = Object.entries(found).flatMap(([name, list]) =>
             list.map((reference) => `${name}.${reference.key} -> ${reference.service}`)
           )
-          const state = { resolved, references, infra: options.infra } satisfies Measured
+          const state = { resolved, references, infra: options.infra, infraNodes: yield* Ref.get(infraNodes) } satisfies Measured
           yield* Ref.set(measured, state)
           return { fingerprints: yield* fingerprintsFrom(yield* takeSnapshot, state), unexplained } satisfies ServiceFingerprints
         })
 
-        const refresh = Ref.get(measured).pipe(
-          Effect.flatMap((state) =>
-            state ? takeSnapshot.pipe(Effect.flatMap((snapshot) => fingerprintsFrom(snapshot, state))) : Effect.succeed({})
-          )
-        )
+        const refresh = Effect.fnUntraced(function* () {
+          const state = yield* Ref.get(measured)
+          if (!state) return { infra: {}, services: {} } satisfies Refreshed
+          const snapshot = yield* takeSnapshot
+          const infra = yield* infraFrom(snapshot, state.infraNodes)
+          return { infra, services: yield* fingerprintsFrom(snapshot, { ...state, infra }) } satisfies Refreshed
+        })()
 
         return { infra, services, refresh } satisfies Session
       })
