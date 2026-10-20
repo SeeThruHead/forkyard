@@ -35,21 +35,29 @@ const repoBins = (worktree: Worktree, cwd: string, basePath: string) =>
 
 export type DaemonContext = { readonly otlpUrl: string | undefined; readonly otlpHeaders: string; readonly basePath: string }
 
+const telemetrySource = "forkyard:otel"
+
 export const daemonEnv = (
   worktree: Worktree,
   service: { readonly name: ServiceName; readonly cwd: string },
   port: Port | undefined,
-  { otlpUrl, otlpHeaders, basePath }: DaemonContext
-): OwnedEnv => ({
-  ...owned("forkyard", {
+  { basePath }: DaemonContext
+): OwnedEnv =>
+  owned("forkyard", {
     PATH: repoBins(worktree, service.cwd, basePath),
     FORKYARD_WORKTREE: worktree.id,
     FORKYARD_BRANCH: worktree.branch,
     FORKYARD_SERVICE: service.name,
     ...(port ? { PORT: String(port) } : {})
-  }),
+  })
+
+export const telemetryDefaults = (
+  worktree: Worktree,
+  service: { readonly name: ServiceName },
+  { otlpUrl, otlpHeaders }: DaemonContext
+): OwnedEnv => ({
   ...(otlpUrl
-    ? owned("forkyard:otel", {
+    ? owned(telemetrySource, {
         OTEL_EXPORTER_OTLP_ENDPOINT: otlpUrl,
         ...(otlpHeaders ? { OTEL_EXPORTER_OTLP_HEADERS: otlpHeaders } : {}),
         OTEL_SERVICE_NAME: service.name,
@@ -58,10 +66,16 @@ export const daemonEnv = (
     : {})
 })
 
+const winningOwned = (mine: Owned | undefined, fromSource: Sourced | undefined) => {
+  if (!mine) return undefined
+  if (mine.source === telemetrySource && fromSource) return undefined
+  return mine
+}
+
 export const mergeEnv = (sourced: SourcedEnv, pristine: SourcedEnv, ownedEnv: OwnedEnv): ReadonlyArray<EnvVar> =>
   [...new Set([...Object.keys(sourced), ...Object.keys(ownedEnv)])].sort().map((key) => {
     const fromSource = sourced[key]
-    const mine = ownedEnv[key]
+    const mine = winningOwned(ownedEnv[key], fromSource)
     const sensitive = (fromSource?.sensitive ?? false) || looksSensitive(key)
     const value = mine?.value ?? fromSource?.value ?? ""
     const before = pristine[key]?.value

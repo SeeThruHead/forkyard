@@ -32,6 +32,14 @@ const urlFor = (port: Port, database: string) => `postgres://postgres@${dockerRe
 
 const majorVersion = (image: string) => Number(/postgres:(\d+)/.exec(image)?.[1] ?? "0")
 
+const dataPath = (image: string) => {
+  const major = majorVersion(image)
+  if (major > 0 && major < 18) return "/var/lib/postgresql/data"
+  return "/var/lib/postgresql"
+}
+
+const variantOf = (image: string) => image.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+
 const onDatabase = <A, E>(port: Port, database: string, effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
   effect.pipe(Effect.provide(PgClient.layer({ url: Redacted.make(urlFor(port, database)) })))
 
@@ -210,7 +218,7 @@ export const docker = (options: Options): InfraSpec => {
         "-e",
         "POSTGRES_HOST_AUTH_METHOD=trust",
         "-v",
-        `${container}-data:/var/lib/postgresql`,
+        `${container}-data:${dataPath(image)}`,
         "--stop-signal",
         "SIGINT",
         image,
@@ -275,6 +283,7 @@ export const docker = (options: Options): InfraSpec => {
   return {
     name,
     scope: options.scope,
+    variant: variantOf(image),
     start,
     tenant,
     actions: { "refresh-golden": refreshGolden, "reset-database": resetDatabase }

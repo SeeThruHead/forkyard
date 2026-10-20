@@ -15,7 +15,7 @@ export const ServiceState = Schema.Union([
   Schema.TaggedStruct("Ready", { run: RunRef }),
   Schema.TaggedStruct("Restarting", { run: RunRef, reason: Schema.String }),
   Schema.TaggedStruct("Done", { run: RunRef }),
-  Schema.TaggedStruct("Failed", { reason: Schema.String })
+  Schema.TaggedStruct("Failed", { reason: Schema.String, run: Schema.optional(RunRef) })
 ])
 export type ServiceState = typeof ServiceState.Type
 

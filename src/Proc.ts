@@ -1,6 +1,6 @@
 import { NodeChildProcessSpawner } from "@effect/platform-node"
 import { isShell, Os } from "./platform/Os.ts"
-import { Clock, Context, Deferred, Effect, Layer, Logger, Metric, Schema, type Scope, Stream, type Tracer } from "effect"
+import { Clock, Context, Deferred, type Duration, Effect, Layer, Logger, Metric, Schema, type Scope, Stream, type Tracer } from "effect"
 import { FetchHttpClient, type HttpClient } from "effect/http"
 import { OtlpExporter, OtlpLogger, OtlpSerialization } from "effect/observability"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
@@ -28,6 +28,8 @@ export type Spawned = {
   readonly logged: Effect.Effect<void>
 }
 
+export const defaultStopTimeout: Duration.Input = "10 seconds"
+
 const mint = (handle: Omit<Spawned, typeof ownedByScope>): Spawned => handle as unknown as Spawned
 
 export type SpawnOptions = {
@@ -37,6 +39,7 @@ export type SpawnOptions = {
   readonly env: Env
   readonly cwd: string
   readonly readyLine?: RegExp
+  readonly stopTimeout?: Duration.Input
   readonly telemetry?: {
     readonly namespace: string
     readonly attributes: Readonly<Record<string, string>>
@@ -108,7 +111,7 @@ export class Proc extends Context.Service<
                 extendEnv: true,
                 detached: os.spawnGroup.detached,
                 ...(os.spawnGroup.killSignal ? { killSignal: os.spawnGroup.killSignal } : {}),
-                forceKillAfter: "3 seconds"
+                forceKillAfter: spawn.stopTimeout ?? defaultStopTimeout
               })
             )
             .pipe(Effect.mapError((error) => new SpawnError({ service: spawn.service, message: error.message })))

@@ -17,7 +17,7 @@ import {
   type Scope
 } from "effect"
 import { HttpClient } from "effect/http"
-import { daemonEnv, EnvResolver, owned, type OwnedEnv } from "./Env.ts"
+import { daemonEnv, EnvResolver, owned, type OwnedEnv, telemetryDefaults } from "./Env.ts"
 import type { InfraName, Port, ServiceName, WorktreeId } from "./Ids.ts"
 import { ownerOfWorktree } from "./Ids.ts"
 import { InfraManager } from "./InfraManager.ts"
@@ -110,7 +110,7 @@ const shouldRestart = (onExit: OnExit, outcome: Outcome) => {
 const endState = (run: RunRef, outcome: Outcome, restarting: boolean): ServiceState => {
   if (restarting) return { _tag: "Restarting", run, reason: describe(outcome) }
   if (outcome._tag === "Exited" && outcome.code === 0) return { _tag: "Done", run }
-  return { _tag: "Failed", reason: describe(outcome) }
+  return { _tag: "Failed", reason: describe(outcome), run }
 }
 
 const restartDelay = (failures: number) => Duration.seconds(failures === 0 ? 1 : Math.min(30, 2 ** failures))
@@ -287,13 +287,17 @@ export class Supervisor extends Context.Service<
             env: serviceEnv,
             cwd: `${worktree.root}/${service.cwd}`,
             ...readyLineOf(service),
+            ...(service.stopTimeout ? { stopTimeout: service.stopTimeout } : {}),
             telemetry: { namespace: worktree.id, attributes: worktreeAttributes(worktree) }
           })
 
+        const daemonContext = { otlpUrl: options.otlpUrl, otlpHeaders: options.otlpHeaders, basePath }
+
         const resolveEnv = (worktree: Worktree, service: ServiceNode, ownedEnv: OwnedEnv, port: Port | undefined) =>
           env.resolve(worktree, service, {
+            ...telemetryDefaults(worktree, service, daemonContext),
             ...ownedEnv,
-            ...daemonEnv(worktree, service, port, { otlpUrl: options.otlpUrl, otlpHeaders: options.otlpHeaders, basePath })
+            ...daemonEnv(worktree, service, port, daemonContext)
           })
 
         const allocateNamedPorts = (service: ServiceNode) =>
@@ -433,7 +437,7 @@ export class Supervisor extends Context.Service<
           }
           return Effect.all(
             [
-              setState(worktree, service, { _tag: "Failed", reason: `exited with ${finished.code}` }),
+              setState(worktree, service, { _tag: "Failed", reason: `exited with ${finished.code}`, run: finished.run }),
               Deferred.fail(ready, new DependencyFailed({ service: service.name }))
             ],
             { discard: true }

@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, FiberMap, Latch, Layer, Metric, Option, Schema } from "effect"
+import { Cause, Clock, Context, Effect, Exit, FiberMap, Latch, Layer, Metric, Option, Schema } from "effect"
 import { type AbsolutePath, branchSlug, type WorktreeId, worktreeId } from "./Ids.ts"
 import { ProxyAddress } from "./ProxyAddress.ts"
 import * as Metrics from "./Metrics.ts"
@@ -92,12 +92,17 @@ export class Worktrees extends Context.Service<
           stack_file: request.stackFile
         })
 
+        const clearUnlessFailed = (id: WorktreeId) => (exit: Exit.Exit<unknown, unknown>) => {
+          if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) return Effect.void
+          return status.clear(id)
+        }
+
         const launch = (stack: Stack, worktree: Worktree) =>
           FiberMap.run(running, worktree.id, { onlyIfMissing: true })(
             supervisor.run(stack, worktree).pipe(
               Effect.scoped,
               Effect.tapCause((cause) => Effect.logError(`worktree ${worktree.id} stopped`, cause)),
-              Effect.ensuring(status.clear(worktree.id)),
+              Effect.onExit(clearUnlessFailed(worktree.id)),
               Effect.ensuring(recordRunning)
             )
           )
@@ -153,6 +158,7 @@ export class Worktrees extends Context.Service<
 
           yield* registry.markDown(id)
           yield* FiberMap.remove(running, id)
+          yield* status.clear(id)
           yield* recordRunning
         })
 

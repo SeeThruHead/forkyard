@@ -46,6 +46,17 @@ describe("env", () => {
     expect(vars.DATABASE_URL?.warning).toBeUndefined()
   })
 
+  it("forkyard's telemetry settings are defaults: a service's own exporter keeps winning", () => {
+    const sourced = { OTEL_EXPORTER_OTLP_ENDPOINT: { value: "http://127.0.0.1:14319", sensitive: false, source: "varlock" } }
+    const owned = {
+      OTEL_EXPORTER_OTLP_ENDPOINT: { value: "http://127.0.0.1:4318", source: "forkyard:otel" },
+      OTEL_SERVICE_NAME: { value: "api", source: "forkyard:otel" }
+    }
+    const vars = Object.fromEntries(mergeEnv(sourced, {}, owned).map((entry) => [entry.key, entry]))
+    expect(vars.OTEL_EXPORTER_OTLP_ENDPOINT).toMatchObject({ value: "http://127.0.0.1:14319", source: "varlock" })
+    expect(vars.OTEL_SERVICE_NAME).toMatchObject({ value: "api", source: "forkyard:otel" })
+  })
+
   it.effect("varlock items without a value (unset @optional keys) are skipped, not an error", () =>
     Effect.gen(function* () {
       const output = JSON.stringify({

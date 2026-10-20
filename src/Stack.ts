@@ -80,6 +80,7 @@ export type InfraSpec = {
   readonly name: InfraName
   readonly scope: "worktree" | "shared"
   readonly sharedBy?: "machine" | "project"
+  readonly variant?: string
   readonly uses?: ReadonlyArray<InfraSpec>
   readonly actions?: Readonly<Record<string, InfraAction>>
   readonly start: (
@@ -113,6 +114,7 @@ export type ServiceNode = {
   readonly uses: ReadonlyArray<InfraName>
   readonly after: ReadonlyArray<ServiceName>
   readonly ports: ReadonlyArray<string>
+  readonly stopTimeout?: Duration.Input
   readonly exposure: Exposure
   readonly lifecycle: Lifecycle
 }
@@ -151,6 +153,7 @@ type CommonProps = {
   readonly uses?: ReadonlyArray<InfraRef>
   readonly after?: ReadonlyArray<ServiceRef>
   readonly ports?: ReadonlyArray<string>
+  readonly stopTimeout?: Duration.Input
 }
 
 type HttpProps = CommonProps & { readonly health?: string; readonly onExit?: OnExit; readonly watch?: Watch }
@@ -228,6 +231,7 @@ const declare = Effect.fn("Service.process")(function* (rawName: string, props: 
     uses: (props.uses ?? []).map((ref) => ref.infra),
     after: (props.after ?? []).map((ref) => ref.service),
     ports: props.ports ?? [],
+    ...(props.stopTimeout ? { stopTimeout: props.stopTimeout } : {}),
     ...shape
   })
 

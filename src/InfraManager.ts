@@ -13,7 +13,7 @@ export type InfraLease = {
 const instanceOf = (spec: InfraSpec, worktree: Worktree) => {
   if (spec.scope === "worktree") return worktree.id
   if (spec.sharedBy === "project") return worktree.project
-  return "shared"
+  return spec.variant ? `shared-${spec.variant}` : "shared"
 }
 
 const keyOf = (name: InfraName, instance: string) => `${name}|${instance}`
