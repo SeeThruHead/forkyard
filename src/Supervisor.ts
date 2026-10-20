@@ -361,7 +361,7 @@ export class Supervisor extends Context.Service<
           const services = nodes.filter(isService)
           const session = stack.inputs ? yield* sharing.session(stack.inputs, worktree) : undefined
 
-          const infraFingerprints = session ? yield* session.infra(infraNodes) : {}
+          const infraFingerprints = session ? yield* session.infra(infraNodes, services) : {}
           const runScope = yield* Effect.scope
           const leases = yield* Effect.forEach(
             infraNodes,

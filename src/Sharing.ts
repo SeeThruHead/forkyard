@@ -91,7 +91,10 @@ export type ServiceFingerprints = {
 }
 
 export type Session = {
-  readonly infra: (infra: ReadonlyArray<InfraNode>) => Effect.Effect<Readonly<Record<string, string>>, InputsError>
+  readonly infra: (
+    infra: ReadonlyArray<InfraNode>,
+    services: ReadonlyArray<ServiceNode>
+  ) => Effect.Effect<Readonly<Record<string, string>>, InputsError>
   readonly services: (options: {
     readonly services: ReadonlyArray<ServiceNode>
     readonly infra: Readonly<Record<string, string>>
@@ -110,6 +113,7 @@ type Measured = {
   readonly references: Readonly<Record<string, ReadonlyArray<string>>>
   readonly infra: Readonly<Record<string, string>>
   readonly infraNodes: ReadonlyArray<InfraNode>
+  readonly consumers: ReadonlyArray<ServiceNode>
 }
 
 export class Sharing extends Context.Service<
@@ -146,19 +150,28 @@ export class Sharing extends Context.Service<
           )
         const measured = yield* Ref.make<Measured | undefined>(undefined)
 
-        const infraFrom = (snapshot: Snapshot, nodes: ReadonlyArray<InfraNode>) =>
+        const consumerHashes = (snapshot: Snapshot, node: InfraNode, consumers: ReadonlyArray<ServiceNode>) =>
+          Effect.forEach(
+            consumers.filter((service) => service.consumes.includes(node.spec.name)).toSorted((a, b) => a.name.localeCompare(b.name)),
+            (service) =>
+              codeWith(snapshot)({ name: service.name, kind: "service" }).pipe(Effect.map((hash) => `${service.name}:${hash ?? "none"}`))
+          )
+
+        const infraFrom = (snapshot: Snapshot, nodes: ReadonlyArray<InfraNode>, consumers: ReadonlyArray<ServiceNode>) =>
           Effect.forEach(nodes, (node) =>
-            codeWith(snapshot)({ name: node.spec.name, kind: "infra" }).pipe(
-              Effect.map((hash) => [node.spec.name, combine(node.spec.name, hash ?? "default")] as const)
+            Effect.all([codeWith(snapshot)({ name: node.spec.name, kind: "infra" }), consumerHashes(snapshot, node, consumers)]).pipe(
+              Effect.map(([hash, consumed]) => [node.spec.name, combine(node.spec.name, hash ?? "default", ...consumed)] as const)
             )
           ).pipe(Effect.map((entries): Readonly<Record<string, string>> => Object.fromEntries(entries)))
 
         const infraNodes = yield* Ref.make<ReadonlyArray<InfraNode>>([])
+        const consumers = yield* Ref.make<ReadonlyArray<ServiceNode>>([])
 
-        const infra = (nodes: ReadonlyArray<InfraNode>) =>
+        const infra = (nodes: ReadonlyArray<InfraNode>, services: ReadonlyArray<ServiceNode>) =>
           Ref.set(infraNodes, nodes).pipe(
+            Effect.andThen(Ref.set(consumers, services)),
             Effect.andThen(takeSnapshot),
-            Effect.flatMap((snapshot) => infraFrom(snapshot, nodes))
+            Effect.flatMap((snapshot) => infraFrom(snapshot, nodes, services))
           )
 
         const fingerprintsFrom = Effect.fnUntraced(function* (snapshot: Snapshot, state: Measured) {
@@ -204,7 +217,13 @@ export class Sharing extends Context.Service<
           const unexplained = Object.entries(found).flatMap(([name, list]) =>
             list.map((reference) => `${name}.${reference.key} -> ${reference.service}`)
           )
-          const state = { resolved, references, infra: options.infra, infraNodes: yield* Ref.get(infraNodes) } satisfies Measured
+          const state = {
+            resolved,
+            references,
+            infra: options.infra,
+            infraNodes: yield* Ref.get(infraNodes),
+            consumers: yield* Ref.get(consumers)
+          } satisfies Measured
           yield* Ref.set(measured, state)
           return { fingerprints: yield* fingerprintsFrom(yield* takeSnapshot, state), unexplained } satisfies ServiceFingerprints
         })
@@ -213,7 +232,7 @@ export class Sharing extends Context.Service<
           const state = yield* Ref.get(measured)
           if (!state) return { infra: {}, services: {} } satisfies Refreshed
           const snapshot = yield* takeSnapshot
-          const infra = yield* infraFrom(snapshot, state.infraNodes)
+          const infra = yield* infraFrom(snapshot, state.infraNodes, state.consumers)
           return { infra, services: yield* fingerprintsFrom(snapshot, { ...state, infra }) } satisfies Refreshed
         })()
 

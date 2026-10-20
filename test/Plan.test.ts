@@ -16,6 +16,7 @@ const service = (name: string, after: ReadonlyArray<string> = []): ServiceNode =
   ports: [],
   links: [],
   reloads: false,
+  consumes: [],
   calls: [],
   exposure: { _tag: "Internal" },
   lifecycle: { _tag: "LongRunning", ready: { _tag: "Started" }, onExit: "restart", watch: undefined }
