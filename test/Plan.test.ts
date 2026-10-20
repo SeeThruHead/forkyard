@@ -14,8 +14,6 @@ const service = (name: string, after: ReadonlyArray<string> = []): ServiceNode =
   uses: [],
   after: after.map((dependency) => ServiceName.make(dependency)),
   ports: [],
-  links: [],
-  reloads: false,
   consumes: [],
   calls: [],
   exposure: { _tag: "Internal" },

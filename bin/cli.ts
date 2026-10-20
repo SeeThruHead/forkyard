@@ -178,25 +178,59 @@ const env = Command.make("env", { service: serviceArgument }, ({ service }) =>
   }).pipe(Effect.scoped, Effect.provide(client))
 ).pipe(Command.withDescription("Show the env a service was started with, and where each value came from"))
 
-const ownCommand = Command.make("own", { service: serviceArgument }, ({ service }) =>
-  Effect.gen(function* () {
-    const forkyard = yield* ForkyardClient
-    const worktree = yield* runningHere()
-    const name = yield* parseService(service)
-    yield* forkyard.Own({ id: worktree.id, service: name })
-    yield* Console.log(`${worktree.id} now runs its own ${service}`)
-  }).pipe(Effect.scoped, Effect.provide(client))
-).pipe(Command.withDescription("Run this worktree's own copy of a service instead of sharing one, before you change it"))
+type ServiceRpc = "Own" | "Share" | "Start" | "Stop"
 
-const shareCommand = Command.make("share", { service: serviceArgument }, ({ service }) =>
+const serviceCommand = (name: string, rpc: ServiceRpc, done: (worktree: string, service: string) => string, description: string) =>
+  Command.make(name, { service: serviceArgument }, ({ service }) =>
+    Effect.gen(function* () {
+      const forkyard = yield* ForkyardClient
+      const worktree = yield* runningHere()
+      const parsed = yield* parseService(service)
+      yield* forkyard[rpc]({ id: worktree.id, service: parsed })
+      yield* Console.log(done(worktree.id, service))
+    }).pipe(Effect.scoped, Effect.provide(client))
+  ).pipe(Command.withDescription(description))
+
+const ownCommand = serviceCommand(
+  "own",
+  "Own",
+  (worktree, service) => `${worktree} runs ${service} here from now on`,
+  "Run this worktree's own copy of a service or infra instead of the shared one"
+)
+
+const shareCommand = serviceCommand(
+  "share",
+  "Share",
+  (worktree, service) => `${worktree} uses the shared ${service} again, unless it calls or uses something that runs here`,
+  "Undo own: use the shared copy of a service or infra again"
+)
+
+const startCommand = serviceCommand(
+  "start",
+  "Start",
+  (worktree, service) => `${worktree} starts ${service}, here or shared, with what it waits on`,
+  "Start a service this worktree needs, here if it runs here and in the shared stack otherwise"
+)
+
+const stopCommand = serviceCommand(
+  "stop",
+  "Stop",
+  (worktree, service) => `${worktree} no longer asks for ${service}`,
+  "Undo start: stop asking for a service"
+)
+
+const sharedUpdate = Command.make("update", {}, () =>
   Effect.gen(function* () {
     const forkyard = yield* ForkyardClient
     const worktree = yield* runningHere()
-    const name = yield* parseService(service)
-    yield* forkyard.Share({ id: worktree.id, service: name })
-    yield* Console.log(`${worktree.id} shares ${service} again whenever another worktree runs the same code`)
+    yield* Console.log(yield* forkyard.UpdateShared({ id: worktree.id }))
   }).pipe(Effect.scoped, Effect.provide(client))
-).pipe(Command.withDescription("Undo own: share a service again when another worktree runs the same code"))
+).pipe(Command.withDescription("Move the shared stack to the latest commit of its ref, e.g. origin/main, and restart what it runs"))
+
+const sharedCommand = Command.make("shared").pipe(
+  Command.withDescription("The stack of services worktrees share"),
+  Command.withSubcommands([sharedUpdate])
+)
 
 const logs = Command.make("logs", { service: serviceArgument }, ({ service }) =>
   Effect.gen(function* () {
@@ -258,7 +292,23 @@ const update = Command.make("update", {}, () => Service.update).pipe(
 )
 
 const forkyard = Command.make("forkyard").pipe(
-  Command.withSubcommands([daemon, up, down, status, env, ownCommand, shareCommand, logs, attach, infraCommand, service, update])
+  Command.withSubcommands([
+    daemon,
+    up,
+    down,
+    status,
+    env,
+    ownCommand,
+    shareCommand,
+    startCommand,
+    stopCommand,
+    sharedCommand,
+    logs,
+    attach,
+    infraCommand,
+    service,
+    update
+  ])
 )
 
 const messageOf = (error: unknown): string => {

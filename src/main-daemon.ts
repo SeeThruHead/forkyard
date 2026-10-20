@@ -98,6 +98,7 @@ const optionsFor = (
   hostsFile,
   socket: os.ipcPath(home),
   stateFile: path.join(home, "forkyard.sqlite"),
+  sharedDir: path.join(home, "shared"),
   traefikDir: path.join(home, "traefik"),
   upstreamHost: Option.getOrElse(config.upstreamHost, () => defaultUpstream(config.proxyMode, os)),
   proxyMode: config.proxyMode,

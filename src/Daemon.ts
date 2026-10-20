@@ -19,7 +19,7 @@ import { EnvResolver } from "./Env.ts"
 import type { Port } from "./Ids.ts"
 import { InfraManager } from "./InfraManager.ts"
 import { Instances } from "./Instances.ts"
-import { Sharing } from "./Sharing.ts"
+import { Changes } from "./Changes.ts"
 import * as Platform from "./Platform.ts"
 import { Proc } from "./Proc.ts"
 import { ForkyardRpcs } from "./Protocol.ts"
@@ -39,6 +39,7 @@ import { Worktrees } from "./Worktrees.ts"
 export type DaemonOptions = {
   readonly socket: string
   readonly stateFile: string
+  readonly sharedDir: string
   readonly traefikDir: string
   readonly upstreamHost: string
   readonly proxyPort: Option.Option<Port>
@@ -168,14 +169,19 @@ export const layer = (options: DaemonOptions) => {
 
   const worktrees = Worktrees.layer({ domain: options.domain }).pipe(
     Layer.provideMerge(
-      Supervisor.layer({ startupConcurrency: options.startupConcurrency, otlpUrl, otlpHeaders: otlpHeadersOf(options.telemetry) })
+      Supervisor.layer({
+        startupConcurrency: options.startupConcurrency,
+        otlpUrl,
+        otlpHeaders: otlpHeadersOf(options.telemetry),
+        sharedDir: options.sharedDir
+      })
     ),
     Layer.provideMerge(EnvResolver.layer),
     Layer.provideMerge(InfraManager.layer({ domain: options.domain })),
     Layer.provideMerge(Instances.layer),
     Layer.provideMerge(Tenants.layer),
     Layer.provideMerge(Pins.layer),
-    Layer.provideMerge(Sharing.layer)
+    Layer.provideMerge(Changes.layer)
   )
 
   const servers = Layer.unwrap(

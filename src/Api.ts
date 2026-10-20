@@ -66,6 +66,10 @@ export const layer = (options: { readonly dashboardUrl: string }) =>
         Restart: ({ id, service }) => supervisor.restart(id, service),
         Own: ({ id, service }) => supervisor.own(id, service),
         Share: ({ id, service }) => supervisor.share(id, service),
+        Start: ({ id, service }) => supervisor.start(id, service),
+        Stop: ({ id, service }) => supervisor.stop(id, service),
+        UpdateShared: ({ id }) =>
+          supervisor.updateShared(id).pipe(Effect.mapError((error) => new ForkyardError({ message: error.message }))),
         Runs: ({ owner, service }) => runs.list(owner, service),
         RunLog: ({ runId }) => runLog(runId),
         Routes: () => router.routes.pipe(Effect.map(Record.map((route) => route.port))),

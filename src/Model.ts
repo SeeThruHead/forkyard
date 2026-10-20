@@ -19,7 +19,7 @@ export const ServiceState = Schema.Union([
 ])
 export type ServiceState = typeof ServiceState.Type
 
-const sharedWith = { sharedWith: Schema.optional(WorktreeId) }
+const sharedWith = { sharedWith: Schema.optional(WorktreeId), asleep: Schema.optional(Schema.Boolean) }
 
 export const ServiceView = Schema.Union([
   Schema.TaggedStruct("Http", { url: Schema.String, state: ServiceState, ...sharedWith }),

@@ -80,6 +80,13 @@ const migrations = Migrator.fromRecord({
   "10_pins": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql`CREATE TABLE pins (worktree TEXT NOT NULL, service TEXT NOT NULL, PRIMARY KEY (worktree, service))`
+  }),
+  "11_pin_kinds": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE pins_by_kind (worktree TEXT NOT NULL, service TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (worktree, service, kind))`
+    yield* sql`INSERT INTO pins_by_kind (worktree, service, kind) SELECT worktree, service, 'own' FROM pins`
+    yield* sql`DROP TABLE pins`
+    yield* sql`ALTER TABLE pins_by_kind RENAME TO pins`
   })
 })
 
