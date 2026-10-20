@@ -9,11 +9,13 @@ import {
   FileSystem,
   Layer,
   Metric,
+  Option,
   Path,
   PubSub,
   Queue,
   RcMap,
   Ref,
+  Schedule,
   Schema,
   Semaphore,
   Scope,
@@ -21,6 +23,7 @@ import {
   SubscriptionRef
 } from "effect"
 import { HttpClient } from "effect/http"
+import { Activity } from "./Activity.ts"
 import { Changes, type Session } from "./Changes.ts"
 import { daemonEnv, EnvResolver, owned, type OwnedEnv, telemetryDefaults } from "./Env.ts"
 import { BranchSlug, type InfraName, ownerOfWorktree, type Port, type ServiceName, type WorktreeId, worktreeId } from "./Ids.ts"
@@ -181,6 +184,7 @@ export class Supervisor extends Context.Service<
         const proc = yield* Proc
         const router = yield* Router
         const waker = yield* Waker
+        const activity = yield* Activity
         const status = yield* Status
         const env = yield* EnvResolver
         const fs = yield* FileSystem.FileSystem
@@ -602,6 +606,42 @@ export class Supervisor extends Context.Service<
           return waker.sleepUntilRequested(hostOf(worktree, service.name), pins.pin(worktree.id, service.name, "start"))
         }
 
+        const sleepIfQuiet = (worktree: Worktree, service: ServiceNode, limit: number, after: Duration.Input) =>
+          activity
+            .quietFor(hostOf(worktree, service.name))
+            .pipe(
+              Effect.flatMap((quiet) =>
+                quiet !== undefined && quiet > limit
+                  ? pins
+                      .unpin(worktree.id, service.name, "start")
+                      .pipe(
+                        Effect.andThen(
+                          Effect.logInfo(
+                            `${worktree.id}/${service.name} had no requests for ${Duration.format(Duration.fromInputUnsafe(after))}, so it sleeps until the next one`
+                          )
+                        )
+                      )
+                  : Effect.void
+              )
+            )
+
+        const sleepWhenQuiet = (worktree: Worktree, services: ReadonlyArray<ServiceNode>, after: Duration.Input) => {
+          const limit = Duration.toMillis(after)
+          const routed = services.filter((service) => service.exposure._tag === "Routed")
+          const check = pins.changes(worktree.id, "start").pipe(
+            Stream.runHead,
+            Effect.map(Option.getOrElse((): ReadonlySet<string> => new Set())),
+            Effect.flatMap((started) =>
+              Effect.forEach(
+                routed.filter((service) => started.has(service.name)),
+                (service) => sleepIfQuiet(worktree, service, limit, after),
+                { discard: true }
+              )
+            )
+          )
+          return check.pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.forkScoped)
+        }
+
         const asleep = (worktree: Worktree, service: ServiceNode, wakes: boolean) =>
           status
             .service(worktree.id, service.name, { ...viewOf(worktree, service, { _tag: "Waiting" }), asleep: true })
@@ -752,6 +792,7 @@ export class Supervisor extends Context.Service<
           if (mode === "shared") yield* demandedIn(worktree.id).pipe(Stream.runForEach(demand), Effect.forkScoped)
           if (mode === "worktree" && !shared) yield* demand(new Set(services.map((service) => service.name)))
           if (shared) {
+            yield* sleepWhenQuiet(worktree, services, stack.shared?.sleepAfter ?? "20 minutes")
             yield* Stream.zipLatest(pins.changes(worktree.id, "own"), pins.changes(worktree.id, "start")).pipe(
               Stream.runForEach(([own, started]) =>
                 placeLocal(localNames(services, own, common)).pipe(Effect.andThen(demand(rootsOf(services, own, started))))

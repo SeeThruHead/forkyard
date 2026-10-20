@@ -1,22 +1,24 @@
 import { Context, Effect, FileSystem, Layer, Path, Record, type Scope, Stream, SubscriptionRef } from "effect"
 import type { Port } from "./Ids.ts"
 
-export type Route = { readonly host: string; readonly port: Port; readonly upstream?: string }
+export type Route = { readonly host: string; readonly port: Port; readonly upstream?: string; readonly builtIn?: string }
 
-const routeId = (host: string) => host.replaceAll(".", "-")
+export const routeId = (host: string) => host.replaceAll(".", "-")
 
 export const traefikConfig = (routes: Readonly<Record<string, Route>>, upstreamHost: string) => {
   const entries = Object.values(routes)
   return {
     http: {
       routers: Object.fromEntries(
-        entries.map((route) => [routeId(route.host), { rule: `Host(\`${route.host}\`)`, service: routeId(route.host) }])
+        entries.map((route) => [routeId(route.host), { rule: `Host(\`${route.host}\`)`, service: route.builtIn ?? routeId(route.host) }])
       ),
       services: Object.fromEntries(
-        entries.map((route) => [
-          routeId(route.host),
-          { loadBalancer: { servers: [{ url: `http://${route.upstream ?? upstreamHost}:${route.port}` }] } }
-        ])
+        entries
+          .filter((route) => route.builtIn === undefined)
+          .map((route) => [
+            routeId(route.host),
+            { loadBalancer: { servers: [{ url: `http://${route.upstream ?? upstreamHost}:${route.port}` }] } }
+          ])
       )
     }
   }

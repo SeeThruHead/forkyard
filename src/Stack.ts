@@ -315,7 +315,7 @@ export const tsNode = (file: string, options: TsNodeOptions = {}): Command => ({
 
 export const cmd = (command: string, ...args: ReadonlyArray<string>): Command => ({ command, args })
 
-export type Shared = { readonly ref: string }
+export type Shared = { readonly ref: string; readonly sleepAfter?: Duration.Input }
 
 export type Stack = {
   readonly name: ProjectName

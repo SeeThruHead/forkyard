@@ -12,7 +12,11 @@ import { cmd, type InfraProcess, proxiedUrl } from "./Stack.ts"
 const traefikArgs = (port: number, dynamicDir: string) => [
   `--entrypoints.web.address=:${port}`,
   `--providers.file.directory=${dynamicDir}`,
-  "--providers.file.watch=true"
+  "--providers.file.watch=true",
+  "--metrics.prometheus=true",
+  "--metrics.prometheus.entryPoint=web",
+  "--metrics.prometheus.addRoutersLabels=true",
+  "--metrics.prometheus.manualRouting=true"
 ]
 
 const preferredPorts = [80, 8080].map((port) => Port.make(port))
@@ -74,7 +78,9 @@ export const layer = (options: Options) =>
 
       const port = yield* choosePort(options, isFree)
       const networking = os.dockerProxy(port)
+      const metricsHost = `metrics.${options.dashboardHost}`
       yield* router.expose({ host: options.dashboardHost, port: options.dashboardPort })
+      yield* router.expose({ host: metricsHost, port, builtIn: "prometheus@internal" })
       const proxy = yield* options.mode === "binary"
         ? tools.spawn({ name: "traefik", run: cmd("traefik", ...traefikArgs(port, path.resolve(options.traefikDir))), env: {} })
         : dockerContainer(tools, {
@@ -90,6 +96,6 @@ export const layer = (options: Options) =>
           })
       yield* reportExit(proxy)
       yield* Effect.annotateCurrentSpan({ "server.port": port })
-      return ProxyAddress.of({ port, url: (host) => proxiedUrl(host, port) })
+      return ProxyAddress.of({ port, url: (host) => proxiedUrl(host, port), metricsHost })
     }).pipe(Effect.withSpan("Proxy.start"))
   )

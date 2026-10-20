@@ -6,5 +6,6 @@ export class ProxyAddress extends Context.Service<
   {
     readonly port: Port
     readonly url: (host: string) => string
+    readonly metricsHost: string
   }
 >()("forkyard/ProxyAddress") {}
