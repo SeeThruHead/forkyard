@@ -80,8 +80,10 @@ const describe = (worktree: WorktreeView) => {
   return [...infra, ...services].join("\n")
 }
 
+const invokedFrom = process.env["INIT_CWD"] ?? process.cwd()
+
 const target = Effect.fn("target")(function* (branch: Option.Option<string>) {
-  const root = yield* findRoot(process.cwd())
+  const root = yield* findRoot(invokedFrom)
   const name = Option.isSome(branch) ? branch.value : yield* branchOf(root)
 
   return { root, branch: name }
@@ -92,7 +94,7 @@ const snapshot = ForkyardClient.use((forkyard) =>
 )
 
 const runningHere = Effect.fn("runningHere")(function* () {
-  const root = yield* findRoot(process.cwd())
+  const root = yield* findRoot(invokedFrom)
   const match = Object.values(yield* snapshot).find((worktree) => worktree.root === root)
 
   if (!match) return yield* Effect.fail("this worktree is not running. Start it with: forkyard up")
@@ -224,7 +226,7 @@ const infraCommand = Command.make("infra", { infra: infraArgument, action: actio
 ).pipe(Command.withDescription("Run an action on this worktree's infra, e.g. forkyard infra postgres refresh-golden"))
 
 const startTarget = Effect.fn("startTarget")(function* () {
-  const root = yield* findRoot(process.cwd()).pipe(Effect.option)
+  const root = yield* findRoot(invokedFrom).pipe(Effect.option)
   if (Option.isNone(root)) return undefined
   return { root: root.value, branch: yield* branchOf(root.value) }
 })
