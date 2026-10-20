@@ -1,11 +1,24 @@
 import { Box, Text, useInput } from "ink"
 import { useState } from "react"
 import type { WorktreeId } from "../src/Ids.ts"
-import { runOf, serviceUrl, type ServiceView, type Snapshot, type UsageMap, type WorktreeView } from "../src/Model.ts"
+import {
+  distinctPids,
+  formatCpu,
+  formatMem,
+  ownPidsOf,
+  runOf,
+  serviceUrl,
+  type ServiceView,
+  sharedLabel,
+  type Snapshot,
+  usageFor,
+  type UsageMap,
+  usageOfPids,
+  type WorktreeView
+} from "../src/Model.ts"
 import type { Line } from "./Feeds.ts"
 import { ButtonBar } from "./ButtonBar.tsx"
 import { clickedButton, isClick, isMouseInput, isWheel, isWheelDown, type Mouse, place, useMouse } from "./Mouse.ts"
-import { formatCpu, formatMem, sumUsage, usageFor } from "./Stats.ts"
 import { keyColor, stateColor, theme } from "./Theme.ts"
 
 type Props = {
@@ -28,12 +41,6 @@ const branchOrder = (a: WorktreeView, b: WorktreeView) => {
   if (b.branch === "main") return 1
   return a.branch.localeCompare(b.branch)
 }
-
-const pidsOf = (worktree: WorktreeView) =>
-  Object.values(worktree.services).flatMap((view) => {
-    const run = runOf(view.state)
-    return run ? [run.pid] : []
-  })
 
 const counts = (worktree: WorktreeView) => {
   const states = Object.values(worktree.services).map((view) => view.state._tag)
@@ -114,7 +121,7 @@ const RowLine = ({ row, usage, selected }: RowProps) => {
 
   if (row._tag === "Repo") {
     const tone = repoTone(row.worktrees)
-    const resources = sumUsage(row.worktrees.map((worktree) => sumUsage(pidsOf(worktree).map((pid) => usageFor(usage, pid)))))
+    const resources = usageOfPids(usage, distinctPids(row.worktrees))
     return (
       <Text wrap="truncate" {...background}>
         <Text color={theme.muted}>{row.open ? "▾ " : "▸ "}</Text>
@@ -132,7 +139,7 @@ const RowLine = ({ row, usage, selected }: RowProps) => {
     const { color, label } = healthOf(row.worktree)
     const infra = Object.values(row.worktree.infra)
     const infraReady = infra.filter((view) => view._tag === "InfraReady").length
-    const resources = sumUsage(pidsOf(row.worktree).map((pid) => usageFor(usage, pid)))
+    const resources = usageOfPids(usage, ownPidsOf(row.worktree))
     return (
       <Text wrap="truncate" {...background}>
         <Text color={theme.muted}>{row.expanded ? "  ▾ " : "  ▸ "}</Text>
@@ -150,16 +157,19 @@ const RowLine = ({ row, usage, selected }: RowProps) => {
 
   const run = runOf(row.view.state)
   const use = run ? usageFor(usage, run.pid) : undefined
-  const note = serviceUrl(row.view)?.replace("http://", "") ?? ("reason" in row.view.state ? row.view.state.reason : "")
-  const tone = stateColor(row.view.state._tag)
+  const shared = sharedLabel(row.view)
+  const url = serviceUrl(row.view)?.replace("http://", "")
+  const note = [shared, url ?? ("reason" in row.view.state ? row.view.state.reason : "")].filter(Boolean).join("  ")
+  const tone = shared ? theme.shared : stateColor(row.view.state._tag)
+  const figures = shared ? theme.shared : theme.text
   return (
     <Text wrap="truncate" {...background}>
       <Text color={tone}>{"      ● "}</Text>
-      <Text color={theme.text}>{pad(row.name, 22)}</Text>
+      <Text color={shared ? theme.shared : theme.text}>{pad(row.name, 22)}</Text>
       <Text color={tone}>{pad(row.view.state._tag.toLowerCase(), 11)}</Text>
       <Text color={theme.muted}>{pad(run ? `#${run.run}` : "", 6)}</Text>
-      <Text color={theme.text}>{pad(formatCpu(use), 6)}</Text>
-      <Text color={theme.text}>{pad(formatMem(use), 7)}</Text>
+      <Text color={figures}>{pad(formatCpu(use), 6)}</Text>
+      <Text color={figures}>{pad(formatMem(use), 7)}</Text>
       <Text color={row.view.state._tag === "Failed" ? theme.failed : theme.accent}>{note}</Text>
     </Text>
   )
@@ -184,7 +194,7 @@ export const Home = ({ snapshot, usage, daemon, rows, onOpen, onStop, onDashboar
   const [expanded, setExpanded] = useState<ReadonlyArray<string>>([])
   const worktrees = Object.values(snapshot).sort(branchOrder)
   const list = rowsOf(worktrees, collapsed, expanded)
-  const total = sumUsage(worktrees.flatMap(pidsOf).map((pid) => usageFor(usage, pid)))
+  const total = usageOfPids(usage, distinctPids(worktrees))
   const processes = worktrees.reduce((sum, worktree) => sum + Object.keys(worktree.services).length, 0)
   const index = Math.min(selected, Math.max(0, list.length - 1))
   const current = list[index]

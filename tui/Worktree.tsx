@@ -5,7 +5,7 @@ import { runOf, serviceUrl } from "../src/Model.ts"
 import { keyOfInfra, type Line, type Logs, separator } from "./Feeds.ts"
 import { ButtonBar } from "./ButtonBar.tsx"
 import { clickedButton, isClick, isMouseInput, isWheel, isWheelDown, type Mouse, place, useMouse } from "./Mouse.ts"
-import { formatCpu, formatMem, usageFor } from "./Stats.ts"
+import { formatCpu, formatMem, sharedLabel, usageFor } from "../src/Model.ts"
 import { keyColor, stateColor, theme } from "./Theme.ts"
 
 export type Entry =
@@ -136,16 +136,18 @@ const InfraLine = ({ name, view }: { readonly name: string; readonly view: Infra
 const ServiceLine = ({ name, view, usage }: { readonly name: string; readonly view: ServiceView; readonly usage: UsageMap }) => {
   const run = runOf(view.state)
   const use = run ? usageFor(usage, run.pid) : undefined
-  const note = serviceUrl(view) ?? ("reason" in view.state ? view.state.reason : "")
+  const shared = sharedLabel(view)
+  const note = [shared, serviceUrl(view) ?? ("reason" in view.state ? view.state.reason : "")].filter(Boolean).join("  ")
+  const figures = shared ? theme.shared : theme.text
   return (
     <Text wrap="truncate">
-      <Text color={theme.text}>{pad(name, 22)}</Text>
+      <Text color={shared ? theme.shared : theme.text}>{pad(name, 22)}</Text>
       <Text color={theme.muted}>{pad(view._tag.toLowerCase(), 8)}</Text>
-      <Text color={stateColor(view.state._tag)}>{pad(view.state._tag.toLowerCase(), 12)}</Text>
+      <Text color={shared ? theme.shared : stateColor(view.state._tag)}>{pad(view.state._tag.toLowerCase(), 12)}</Text>
       <Text color={theme.muted}>{pad(run ? `#${run.run}` : "", 6)}</Text>
       <Text color={theme.muted}>{pad(run ? String(run.pid) : "", 8)}</Text>
-      <Text color={theme.text}>{pad(formatCpu(use), 7)}</Text>
-      <Text color={theme.text}>{pad(formatMem(use), 9)}</Text>
+      <Text color={figures}>{pad(formatCpu(use), 7)}</Text>
+      <Text color={figures}>{pad(formatMem(use), 9)}</Text>
       <Text color={view.state._tag === "Failed" ? theme.failed : theme.accent}>{note}</Text>
     </Text>
   )

@@ -15,7 +15,8 @@ export const theme = {
   starting: "#f2c14e",
   waiting: "#9aa3b2",
   restarting: "#c49bff",
-  failed: "#ff7b7b"
+  failed: "#ff7b7b",
+  shared: "#7dcfff"
 } as const
 
 const stateColors: Readonly<Record<string, string>> = {

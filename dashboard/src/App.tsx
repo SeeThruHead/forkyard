@@ -2,9 +2,9 @@ import { useAtomValue } from "@effect/atom-react"
 import { AsyncResult } from "effect/reactivity"
 import type { ReactNode } from "react"
 import { WorktreeId } from "../../src/Ids.ts"
-import type { Snapshot, UsageMap } from "../../src/Model.ts"
+import { distinctPids, formatCpu, formatMem, type Snapshot, type UsageMap, usageOfPids } from "../../src/Model.ts"
 import { snapshotAtom, usageAtom } from "./forkyard.ts"
-import { formatCpu, formatMem, pidsOf, sumUsage, worktreeOrder } from "./format.ts"
+import { worktreeOrder } from "./format.ts"
 import { Home } from "./Home.tsx"
 import { Tour } from "./Tour.tsx"
 import { branchOrder, Frames, show, useRoute } from "./ui.tsx"
@@ -13,7 +13,7 @@ import { WorktreePage } from "./Worktree.tsx"
 const Totals = ({ snapshot, usage }: { readonly snapshot: Snapshot; readonly usage: UsageMap }) => {
   const worktrees = Object.values(snapshot)
   const processes = worktrees.reduce((sum, worktree) => sum + Object.keys(worktree.services).length, 0)
-  const total = sumUsage(worktrees.flatMap(pidsOf).map((pid) => usage[String(pid)]))
+  const total = usageOfPids(usage, distinctPids(worktrees))
   return (
     <>
       <span className="totals">

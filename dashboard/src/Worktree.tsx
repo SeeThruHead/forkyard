@@ -2,9 +2,19 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react"
 import { AsyncResult } from "effect/reactivity"
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react"
 import { ownerOfInfra, ownerOfWorktree, type RunId, ServiceName, type WorktreeId } from "../../src/Ids.ts"
-import { type InfraView, runOf, serviceUrl, type ServiceView, type UsageMap, type WorktreeView } from "../../src/Model.ts"
+import {
+  formatCpu,
+  formatMem,
+  type InfraView,
+  runOf,
+  serviceUrl,
+  type ServiceView,
+  sharedLabel,
+  type UsageMap,
+  type WorktreeView
+} from "../../src/Model.ts"
 import { allLogsAtom, daemonLogAtom, envAtom, envKey, followKey, restartAtom, runLogAtom, runsAtom, runsKey } from "./forkyard.ts"
-import { formatCpu, formatMem, keyColor } from "./format.ts"
+import { keyColor } from "./format.ts"
 import { go } from "./ui.tsx"
 
 type Entry =
@@ -206,16 +216,18 @@ const ProcessTable = ({ worktree, usage }: { readonly worktree: WorktreeView; re
           const run = runOf(view.state)
           const use = run ? usage[String(run.pid)] : undefined
           const url = serviceUrl(view)
+          const shared = sharedLabel(view)
           return (
             <tr key={name} className="clickable" onClick={() => go(`wt/${worktree.id}/${name}`)}>
-              <td>{name}</td>
+              <td className={shared ? "shared" : ""}>{name}</td>
               <td className="dim">{view._tag.toLowerCase()}</td>
-              <td className={`c-${view.state._tag}`}>{view.state._tag.toLowerCase()}</td>
+              <td className={shared ? "shared" : `c-${view.state._tag}`}>{view.state._tag.toLowerCase()}</td>
               <td className="num dim">{run ? `#${run.run}` : ""}</td>
               <td className="num dim">{run?.pid ?? ""}</td>
-              <td className="num">{formatCpu(use)}</td>
-              <td className="num">{formatMem(use)}</td>
+              <td className={shared ? "num shared" : "num"}>{formatCpu(use)}</td>
+              <td className={shared ? "num shared" : "num"}>{formatMem(use)}</td>
               <td>
+                {shared ? <span className="shared">{shared} </span> : null}
                 {url ? (
                   <a href={url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
                     {url.replace("http://", "")}

@@ -2,9 +2,21 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react"
 import { AsyncResult } from "effect/reactivity"
 import { useState } from "react"
 import { ServiceName } from "../../src/Ids.ts"
-import { runOf, serviceUrl, type Snapshot, type UsageMap, type WorktreeView } from "../../src/Model.ts"
+import {
+  distinctPids,
+  formatCpu,
+  formatMem,
+  ownPidsOf,
+  runOf,
+  serviceUrl,
+  sharedLabel,
+  type Snapshot,
+  type UsageMap,
+  usageOfPids,
+  type WorktreeView
+} from "../../src/Model.ts"
 import { daemonLogAtom, restartAtom, stopAtom } from "./forkyard.ts"
-import { counts, formatCpu, formatMem, healthOf, keyColor, mainUrl, sumUsage, usageOfWorktree, worktreeOrder } from "./format.ts"
+import { counts, healthOf, keyColor, mainUrl, worktreeOrder } from "./format.ts"
 import { go } from "./ui.tsx"
 
 const collapsedKey = "forkyard.collapsed"
@@ -46,15 +58,18 @@ const Processes = ({ worktree, usage }: { readonly worktree: WorktreeView; reado
         const run = runOf(view.state)
         const use = run ? usage[String(run.pid)] : undefined
         const url = serviceUrl(view)
+        const shared = sharedLabel(view)
+        const tone = shared ? "shared" : `c-${view.state._tag}`
         return (
           <div className="proc" key={name}>
-            <span className={`c-${view.state._tag}`}>●</span>
-            <span>{name}</span>
-            <span className={`c-${view.state._tag}`}>{view.state._tag.toLowerCase()}</span>
+            <span className={tone}>●</span>
+            <span className={shared ? "shared" : ""}>{name}</span>
+            <span className={tone}>{view.state._tag.toLowerCase()}</span>
             <span className="stat dim">{run ? `#${run.run}` : ""}</span>
-            <span className="stat">{formatCpu(use)}</span>
-            <span className="stat">{formatMem(use)}</span>
+            <span className={shared ? "stat shared" : "stat"}>{formatCpu(use)}</span>
+            <span className={shared ? "stat shared" : "stat"}>{formatMem(use)}</span>
             <span className="proc-note">
+              {shared ? <span className="shared">{shared} </span> : null}
               {url ? (
                 <a href={url} target="_blank" rel="noreferrer">
                   {url.replace("http://", "")}
@@ -96,7 +111,7 @@ const Branch = ({
   const health = healthOf(worktree)
   const infra = Object.values(worktree.infra)
   const infraReady = infra.filter((view) => view._tag === "InfraReady").length
-  const total = usageOfWorktree(usage, worktree)
+  const total = usageOfPids(usage, ownPidsOf(worktree))
   const url = mainUrl(worktree)
 
   return (
@@ -161,7 +176,7 @@ const Repo = ({
   const total = all.reduce((sum, item) => sum + item.total, 0)
   const settled = all.reduce((sum, item) => sum + item.settled, 0)
   const failed = all.reduce((sum, item) => sum + item.failed, 0)
-  const resources = sumUsage(worktrees.map((worktree) => usageOfWorktree(usage, worktree)))
+  const resources = usageOfPids(usage, distinctPids(worktrees))
 
   return (
     <div className="repo">

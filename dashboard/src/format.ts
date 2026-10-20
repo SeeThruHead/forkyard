@@ -1,28 +1,4 @@
-import { runOf, serviceUrl, type UsageMap, type WorktreeView } from "../../src/Model.ts"
-
-export type Usage = { readonly cpu: number; readonly rssKb: number }
-
-export const pidsOf = (worktree: WorktreeView) =>
-  Object.values(worktree.services).flatMap((view) => {
-    const run = runOf(view.state)
-    return run ? [run.pid] : []
-  })
-
-export const sumUsage = (usages: ReadonlyArray<Usage | undefined>): Usage =>
-  usages.reduce<Usage>((total, usage) => ({ cpu: total.cpu + (usage?.cpu ?? 0), rssKb: total.rssKb + (usage?.rssKb ?? 0) }), {
-    cpu: 0,
-    rssKb: 0
-  })
-
-export const usageOfWorktree = (usage: UsageMap, worktree: WorktreeView) => sumUsage(pidsOf(worktree).map((pid) => usage[String(pid)]))
-
-export const formatCpu = (usage: Usage | undefined) => (usage ? `${usage.cpu.toFixed(0)}%` : "")
-
-export const formatMem = (usage: Usage | undefined) => {
-  if (!usage) return ""
-  const mb = usage.rssKb / 1024
-  return mb >= 1024 ? `${(mb / 1024).toFixed(1)}G` : `${mb.toFixed(0)}M`
-}
+import { serviceUrl, type WorktreeView } from "../../src/Model.ts"
 
 export const counts = (worktree: WorktreeView) => {
   const states = Object.values(worktree.services).map((view) => view.state._tag)

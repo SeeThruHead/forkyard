@@ -111,6 +111,40 @@ export type DaemonLine = typeof DaemonLine.Type
 
 export const runOf = (state: ServiceState): RunRef | undefined => ("run" in state ? state.run : undefined)
 
+export const sharedLabel = (view: ServiceView) => (view.sharedWith ? `via ${view.sharedWith.split(".")[0]}` : undefined)
+
+export type Usage = { readonly cpu: number; readonly rssKb: number }
+
+export const usageFor = (usage: UsageMap, pid: number): Usage | undefined => usage[String(pid)]
+
+export const sumUsage = (usages: ReadonlyArray<Usage | undefined>): Usage =>
+  usages.reduce<Usage>((total, usage) => ({ cpu: total.cpu + (usage?.cpu ?? 0), rssKb: total.rssKb + (usage?.rssKb ?? 0) }), {
+    cpu: 0,
+    rssKb: 0
+  })
+
+export const formatCpu = (usage: Usage | undefined) => (usage ? `${usage.cpu.toFixed(0)}%` : "")
+
+export const formatMem = (usage: Usage | undefined) => {
+  if (!usage) return ""
+  const mb = usage.rssKb / 1024
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)}G` : `${mb.toFixed(0)}M`
+}
+
+const pidsOfViews = (views: ReadonlyArray<ServiceView>) =>
+  views.flatMap((view) => {
+    const run = runOf(view.state)
+    return run ? [run.pid] : []
+  })
+
+export const ownPidsOf = (worktree: WorktreeView) => pidsOfViews(Object.values(worktree.services).filter((view) => !view.sharedWith))
+
+export const distinctPids = (worktrees: ReadonlyArray<WorktreeView>) => [
+  ...new Set(pidsOfViews(worktrees.flatMap((worktree) => Object.values(worktree.services))))
+]
+
+export const usageOfPids = (usage: UsageMap, pids: ReadonlyArray<number>) => sumUsage(pids.map((pid) => usageFor(usage, pid)))
+
 export const stateLabel = (state: ServiceState) => state._tag.toLowerCase()
 
 export const stateDetail = (state: ServiceState) => ("reason" in state ? state.reason : undefined)
