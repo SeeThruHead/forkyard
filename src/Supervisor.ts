@@ -110,6 +110,11 @@ type Lease = {
 
 const envOfLeases = (leases: ReadonlyArray<Lease>): InfraEnv => Object.fromEntries(leases.map((lease) => [lease.spec.name, lease.env]))
 
+type Changes = {
+  readonly code: Effect.Effect<void>
+  readonly afterWatch: (watched: Effect.Effect<void>) => Effect.Effect<void>
+}
+
 const reasonOf = (cause: Cause.Cause<unknown>) => Cause.pretty(cause).split("\n")[0]?.slice(0, 300) ?? "failed"
 
 const describe = (outcome: Outcome) => {
@@ -492,9 +497,9 @@ export class Supervisor extends Context.Service<
           lifecycle: { readonly onExit: OnExit; readonly watch: Watch | undefined },
           ownedEnv: Effect.Effect<OwnedEnv>,
           ready: Ready,
-          codeChanged: Effect.Effect<void>
+          changes: Changes
         ) {
-          const nextChange = Effect.raceFirst(yield* watching(worktree, lifecycle.watch), codeChanged)
+          const nextChange = Effect.raceFirst(changes.afterWatch(yield* watching(worktree, lifecycle.watch)), changes.code)
           const failed = (cause: Cause.Cause<unknown>) => setState(worktree, service, { _tag: "Failed", reason: reasonOf(cause) })
 
           const attempt = (failures: number): Effect.Effect<void> =>
@@ -554,9 +559,9 @@ export class Supervisor extends Context.Service<
           watch: Watch | undefined,
           ownedEnv: Effect.Effect<OwnedEnv>,
           ready: Ready,
-          codeChanged: Effect.Effect<void>
+          changes: Changes
         ) {
-          const nextChange = Effect.raceFirst(yield* watching(worktree, watch), codeChanged)
+          const nextChange = Effect.raceFirst(changes.afterWatch(yield* watching(worktree, watch)), changes.code)
 
           return yield* runTaskOnce(worktree, service, ownedEnv, ready).pipe(Effect.andThen(nextChange), Effect.forever)
         })
@@ -571,13 +576,7 @@ export class Supervisor extends Context.Service<
           )
 
         const supervise = Effect.fnUntraced(
-          function* (
-            worktree: Worktree,
-            service: ServiceNode,
-            infraEnv: Effect.Effect<InfraEnv>,
-            readiness: Readiness,
-            codeChanged: Effect.Effect<void>
-          ) {
+          function* (worktree: Worktree, service: ServiceNode, infraEnv: Effect.Effect<InfraEnv>, readiness: Readiness, changes: Changes) {
             const ready = readiness[service.name]!
             const ownedEnv = infraEnv.pipe(Effect.map((current) => ownedEnvFor(service, current)))
 
@@ -585,8 +584,8 @@ export class Supervisor extends Context.Service<
             yield* awaitDependencies(service, readiness)
 
             if (service.lifecycle._tag === "RunOnce")
-              return yield* runTask(worktree, service, service.lifecycle.watch, ownedEnv, ready, codeChanged)
-            return yield* keepRunning(worktree, service, service.lifecycle, ownedEnv, ready, codeChanged)
+              return yield* runTask(worktree, service, service.lifecycle.watch, ownedEnv, ready, changes)
+            return yield* keepRunning(worktree, service, service.lifecycle, ownedEnv, ready, changes)
           },
           (effect, worktree, service, _infraEnv, readiness) =>
             effect.pipe(
@@ -679,6 +678,17 @@ export class Supervisor extends Context.Service<
           const readiness = yield* readinessOf(services)
           const current = yield* SubscriptionRef.make(fingerprints)
           const leased = yield* Ref.make(leases)
+          const generation = yield* SubscriptionRef.make(0)
+          const nextGeneration = SubscriptionRef.get(generation).pipe(
+            Effect.flatMap((seen) =>
+              SubscriptionRef.changes(generation).pipe(
+                Stream.filter((count) => count > seen),
+                Stream.runHead
+              )
+            ),
+            Effect.asVoid
+          )
+          const afterWatch = (watched: Effect.Effect<void>) => (session ? watched.pipe(Effect.andThen(nextGeneration)) : watched)
           const infraNow = yield* Ref.make(infraEnv)
 
           const moveInfra = (lease: Lease, fingerprint: string | undefined) =>
@@ -696,6 +706,7 @@ export class Supervisor extends Context.Service<
             yield* Ref.set(leased, after)
             yield* Ref.set(infraNow, envOfLeases(after))
             yield* SubscriptionRef.set(current, refreshed.services)
+            yield* SubscriptionRef.update(generation, (count) => count + 1)
             yield* Effect.forEach(changed, (lease) => Scope.close(lease.scope, Exit.void), { discard: true })
           })
 
@@ -713,8 +724,8 @@ export class Supervisor extends Context.Service<
               Stream.runForEach((fingerprint) => (fingerprint ? instances.setFingerprint(key, fingerprint) : Effect.void)),
               Effect.forkScoped
             )
-            const codeChanged = service.reloads ? Effect.never : yield* signalOnChange(mine(service))
-            return yield* supervise(worktree, service, Ref.get(infraNow), readiness, codeChanged)
+            const code = service.reloads ? Effect.never : yield* signalOnChange(mine(service))
+            return yield* supervise(worktree, service, Ref.get(infraNow), readiness, { code, afterWatch })
           })
 
           const reclaim = (service: ServiceNode) =>
