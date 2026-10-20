@@ -628,12 +628,13 @@ export class Supervisor extends Context.Service<
         const sleepWhenQuiet = (worktree: Worktree, services: ReadonlyArray<ServiceNode>, after: Duration.Input) => {
           const limit = Duration.toMillis(after)
           const routed = services.filter((service) => service.exposure._tag === "Routed")
-          const check = pins.changes(worktree.id, "start").pipe(
+          const nothing: readonly [ReadonlySet<string>, ReadonlySet<string>] = [new Set(), new Set()]
+          const check = Stream.zipLatest(pins.changes(worktree.id, "own"), pins.changes(worktree.id, "start")).pipe(
             Stream.runHead,
-            Effect.map(Option.getOrElse((): ReadonlySet<string> => new Set())),
-            Effect.flatMap((started) =>
+            Effect.map(Option.getOrElse(() => nothing)),
+            Effect.flatMap(([own, started]) =>
               Effect.forEach(
-                routed.filter((service) => started.has(service.name)),
+                routed.filter((service) => started.has(service.name) && !own.has(service.name)),
                 (service) => sleepIfQuiet(worktree, service, limit, after),
                 { discard: true }
               )
