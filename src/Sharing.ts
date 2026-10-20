@@ -1,7 +1,18 @@
 import { Cache, Context, Effect, FileSystem, Layer, Path, Ref } from "effect"
 import { createHash } from "node:crypto"
 import { ownerOfWorktree, type WorktreeId } from "./Ids.ts"
-import { codeHash, combine, envHash, InputsError, type InputsHook, type InputsTarget, type Snapshot, snapshotOf } from "./Inputs.ts"
+import {
+  codeHash,
+  combine,
+  envHash,
+  fileHashIn,
+  InputsError,
+  hookOf,
+  type InputsSource,
+  type InputsTarget,
+  type Snapshot,
+  snapshotOf
+} from "./Inputs.ts"
 import { Proc } from "./Proc.ts"
 import { hostOf, type InfraNode, type Run, type ServiceNode, type Worktree } from "./Stack.ts"
 
@@ -118,7 +129,7 @@ type Measured = {
 
 export class Sharing extends Context.Service<
   Sharing,
-  { readonly session: (hook: InputsHook, worktree: Worktree) => Effect.Effect<Session, InputsError> }
+  { readonly session: (source: InputsSource, worktree: Worktree) => Effect.Effect<Session, InputsError> }
 >()("forkyard/Sharing") {
   static readonly layer = Layer.effect(
     Sharing,
@@ -138,13 +149,14 @@ export class Sharing extends Context.Service<
           Effect.orElseSucceed(() => "deleted")
         )
 
-      const session = Effect.fn("Sharing.session")(function* (hook: InputsHook, worktree: Worktree) {
+      const session = Effect.fn("Sharing.session")(function* (source: InputsSource, worktree: Worktree) {
+        const hook = yield* hookOf(source)
         const exec = execIn(worktree.id, worktree.root)
         const cache = yield* Cache.make({ lookup: (key: string) => exec(JSON.parse(key) as Run).pipe(Effect.scoped), capacity: 64 })
         const cachedExec = (run: Run) => Cache.get(cache, JSON.stringify(run))
         const takeSnapshot = snapshotOf({ exec, contentHash: contentHash(worktree.root) }).pipe(Effect.scoped)
         const codeWith = (snapshot: Snapshot) => (target: InputsTarget) =>
-          hook(target, { root: worktree.root, exec: cachedExec }).pipe(
+          hook(target, { root: worktree.root, exec: cachedExec, fileHash: fileHashIn(snapshot) }).pipe(
             Effect.map((inputs) => (inputs ? codeHash(snapshot, inputs) : undefined)),
             Effect.scoped
           )

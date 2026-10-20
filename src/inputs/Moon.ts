@@ -1,5 +1,6 @@
 import { Effect, Schema } from "effect"
 import { type InputsContext, InputsError, type InputsHook, type InputsTarget } from "../Inputs.ts"
+import { lockCache, type LockCache, lockOf, sliceHash } from "./Lockfile.ts"
 
 const Dependency = Schema.Union([Schema.String, Schema.Struct({ id: Schema.String })])
 
@@ -19,6 +20,7 @@ export type MoonOptions = {
   readonly services: Readonly<Record<string, string>>
   readonly paths?: Readonly<Record<string, ReadonlyArray<string>>>
   readonly always?: ReadonlyArray<string>
+  readonly lockfile?: string | false
 }
 
 const idOf = (dependency: typeof Dependency.Type) => (typeof dependency === "string" ? dependency : dependency.id)
@@ -47,9 +49,24 @@ const graphOf = Effect.fnUntraced(function* (context: InputsContext) {
 const unknownProject = (target: InputsTarget, project: string) =>
   new InputsError({ message: `${target.name} maps to moon project "${project}", which moon does not know` })
 
-export const moon =
-  (options: MoonOptions): InputsHook =>
-  (target, context) =>
+const lockSlice = Effect.fnUntraced(function* (
+  cache: LockCache,
+  file: string | false,
+  context: InputsContext,
+  sources: ReadonlyArray<string>
+) {
+  if (!file) return []
+  const contentHash = context.fileHash(file)
+  if (!contentHash) return []
+  const lock = yield* lockOf(cache, context.root, file, contentHash)
+  return [`lockfile ${sliceHash(lock, [".", ...sources])}`]
+})
+
+export const moon = (options: MoonOptions): Effect.Effect<InputsHook> => lockCache.pipe(Effect.map((cache) => hookWith(options, cache)))
+
+const hookWith = (options: MoonOptions, cache: LockCache): InputsHook => {
+  const lockfile = options.lockfile ?? "pnpm-lock.yaml"
+  return (target, context) =>
     Effect.gen(function* () {
       const always = target.kind === "service" ? (options.always ?? []) : []
       const explicit = options.paths?.[target.name]
@@ -61,5 +78,7 @@ export const moon =
       const graph = yield* graphOf(context)
       if (!graph[project]) return yield* unknownProject(target, project)
       const sources = [...closure(graph, [project])].map((id) => graph[id]!.source)
-      return { paths: [...sources, ...always] }
+      const extra = target.kind === "service" ? yield* lockSlice(cache, lockfile, context, sources) : []
+      return { paths: [...sources, ...always], extra }
     })
+}
