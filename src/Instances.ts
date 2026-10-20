@@ -12,6 +12,7 @@ export class Instances extends Context.Service<
   {
     readonly publish: (key: string, instance: Instance) => Effect.Effect<void, never, Scope.Scope>
     readonly setPort: (key: string, port: Port | undefined) => Effect.Effect<void>
+    readonly setFingerprint: (key: string, fingerprint: string) => Effect.Effect<void>
     readonly find: (fingerprint: string, besides: WorktreeId) => Effect.Effect<Found | undefined>
     readonly watch: (key: string) => Stream.Stream<Instance | undefined>
   }
@@ -33,6 +34,13 @@ export class Instances extends Context.Service<
           return { ...all, [key]: { ...current, port } }
         })
 
+      const setFingerprint = (key: string, fingerprint: string) =>
+        SubscriptionRef.update(state, (all) => {
+          const current = all[key]
+          if (!current) return all
+          return { ...all, [key]: { ...current, fingerprint } }
+        })
+
       const find = (fingerprint: string, besides: WorktreeId) =>
         SubscriptionRef.get(state).pipe(
           Effect.map((all) => {
@@ -47,7 +55,7 @@ export class Instances extends Context.Service<
           Stream.changesWith((a, b) => a?.fingerprint === b?.fingerprint && a?.port === b?.port)
         )
 
-      return Instances.of({ publish, setPort, find, watch })
+      return Instances.of({ publish, setPort, setFingerprint, find, watch })
     })
   )
 }

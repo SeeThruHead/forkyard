@@ -18,6 +18,7 @@ const node = (name: string, kind: "task" | "service", after: ReadonlyArray<strin
   calls: [],
   ports: [],
   links: [],
+  reloads: false,
   exposure: kind === "task" ? { _tag: "Internal" } : { _tag: "Routed", health: "/health" },
   lifecycle:
     kind === "task"

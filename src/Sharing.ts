@@ -1,7 +1,7 @@
-import { Cache, Context, Effect, FileSystem, Layer, Path } from "effect"
+import { Cache, Context, Effect, FileSystem, Layer, Path, Ref } from "effect"
 import { createHash } from "node:crypto"
 import { ownerOfWorktree, type WorktreeId } from "./Ids.ts"
-import { codeHash, combine, envHash, InputsError, type InputsHook, type InputsTarget, snapshotOf } from "./Inputs.ts"
+import { codeHash, combine, envHash, InputsError, type InputsHook, type InputsTarget, type Snapshot, snapshotOf } from "./Inputs.ts"
 import { Proc } from "./Proc.ts"
 import { hostOf, type InfraNode, type Run, type ServiceNode, type Worktree } from "./Stack.ts"
 
@@ -97,6 +97,13 @@ export type Session = {
     readonly infra: Readonly<Record<string, string>>
     readonly envOf: (service: ServiceNode) => Effect.Effect<Readonly<Record<string, string>>, unknown>
   }) => Effect.Effect<ServiceFingerprints, unknown>
+  readonly refresh: Effect.Effect<Readonly<Record<string, string>>, unknown>
+}
+
+type Measured = {
+  readonly resolved: ReadonlyArray<{ readonly service: ServiceNode; readonly env: Readonly<Record<string, string>> }>
+  readonly references: Readonly<Record<string, ReadonlyArray<string>>>
+  readonly infra: Readonly<Record<string, string>>
 }
 
 export class Sharing extends Context.Service<
@@ -125,36 +132,46 @@ export class Sharing extends Context.Service<
         const exec = execIn(worktree.id, worktree.root)
         const cache = yield* Cache.make({ lookup: (key: string) => exec(JSON.parse(key) as Run).pipe(Effect.scoped), capacity: 64 })
         const cachedExec = (run: Run) => Cache.get(cache, JSON.stringify(run))
-        const snapshot = yield* snapshotOf({ exec: cachedExec, contentHash: contentHash(worktree.root) }).pipe(Effect.scoped)
-        const code = (target: InputsTarget) =>
+        const takeSnapshot = snapshotOf({ exec, contentHash: contentHash(worktree.root) }).pipe(Effect.scoped)
+        const codeWith = (snapshot: Snapshot) => (target: InputsTarget) =>
           hook(target, { root: worktree.root, exec: cachedExec }).pipe(
             Effect.map((inputs) => (inputs ? codeHash(snapshot, inputs) : undefined)),
             Effect.scoped
           )
+        const measured = yield* Ref.make<Measured | undefined>(undefined)
 
         const infra = (nodes: ReadonlyArray<InfraNode>) =>
-          Effect.forEach(nodes, (node) =>
-            code({ name: node.spec.name, kind: "infra" }).pipe(
-              Effect.map((hash) => [node.spec.name, combine(node.spec.name, hash ?? "default")] as const)
+          takeSnapshot.pipe(
+            Effect.flatMap((snapshot) =>
+              Effect.forEach(nodes, (node) =>
+                codeWith(snapshot)({ name: node.spec.name, kind: "infra" }).pipe(
+                  Effect.map((hash) => [node.spec.name, combine(node.spec.name, hash ?? "default")] as const)
+                )
+              )
+            ),
+            Effect.map((entries): Readonly<Record<string, string>> => Object.fromEntries(entries))
+          )
+
+        const fingerprintsFrom = Effect.fnUntraced(function* (snapshot: Snapshot, state: Measured) {
+          const hashes = yield* Effect.forEach(state.resolved, ({ service, env }) =>
+            codeWith(snapshot)({ name: service.name, kind: "service" }).pipe(Effect.map((hash) => ({ service, env, hash })))
+          )
+          const own = Object.fromEntries(
+            hashes.flatMap(({ service, env, hash }) =>
+              hash === undefined
+                ? []
+                : [[service.name, serviceFingerprint(worktree, [worktree.domain], service, hash, env, state.infra)] as const]
             )
-          ).pipe(Effect.map((entries): Readonly<Record<string, string>> => Object.fromEntries(entries)))
+          )
+          return withCalls(own, state.references)
+        })
 
         const services: Session["services"] = Effect.fnUntraced(function* (options) {
           const names = options.services.map((service) => service.name)
           const resolved = yield* Effect.forEach(
             options.services,
-            (service) =>
-              Effect.all([code({ name: service.name, kind: "service" }), options.envOf(service)]).pipe(
-                Effect.map(([hash, env]) => ({ service, hash, env }))
-              ),
+            (service) => options.envOf(service).pipe(Effect.map((env) => ({ service, env }))),
             { concurrency: 4 }
-          )
-          const fingerprints = Object.fromEntries(
-            resolved.flatMap(({ service, hash, env }) =>
-              hash === undefined
-                ? []
-                : [[service.name, serviceFingerprint(worktree, [worktree.domain], service, hash, env, options.infra)] as const]
-            )
           )
           const found = Object.fromEntries(
             resolved.map(({ service, env }) => [
@@ -178,10 +195,18 @@ export class Sharing extends Context.Service<
           const unexplained = Object.entries(found).flatMap(([name, list]) =>
             list.map((reference) => `${name}.${reference.key} -> ${reference.service}`)
           )
-          return { fingerprints: withCalls(fingerprints, references), unexplained } satisfies ServiceFingerprints
+          const state = { resolved, references, infra: options.infra } satisfies Measured
+          yield* Ref.set(measured, state)
+          return { fingerprints: yield* fingerprintsFrom(yield* takeSnapshot, state), unexplained } satisfies ServiceFingerprints
         })
 
-        return { infra, services } satisfies Session
+        const refresh = Ref.get(measured).pipe(
+          Effect.flatMap((state) =>
+            state ? takeSnapshot.pipe(Effect.flatMap((snapshot) => fingerprintsFrom(snapshot, state))) : Effect.succeed({})
+          )
+        )
+
+        return { infra, services, refresh } satisfies Session
       })
 
       return Sharing.of({ session })
