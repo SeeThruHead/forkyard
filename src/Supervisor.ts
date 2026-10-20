@@ -54,6 +54,10 @@ export class OwnRequested extends Schema.TaggedError<OwnRequested>()("OwnRequest
   service: Schema.String
 }) {}
 
+export class Rejoin extends Schema.TaggedError<Rejoin>()("Rejoin", {
+  service: Schema.String
+}) {}
+
 export class LenderGone extends Schema.TaggedError<LenderGone>()("LenderGone", {
   service: Schema.String
 }) {}
@@ -325,7 +329,7 @@ export class Supervisor extends Context.Service<
           const lenders = Object.fromEntries(Object.entries(matched).filter(([name]) => keep.has(name)))
           yield* Effect.forEach(
             services.filter((service) => !lenders[service.name]),
-            (service) => publishOwn(worktree, service.name, fingerprints[service.name]),
+            () => Effect.void,
             { discard: true }
           )
           return lenders as Readonly<Record<string, Found>>
@@ -732,15 +736,41 @@ export class Supervisor extends Context.Service<
               Stream.changes
             )
 
-          const own = Effect.fnUntraced(function* (service: ServiceNode) {
-            const key = instanceKey(worktree.id, service.name)
-            yield* mine(service).pipe(
-              Stream.runForEach((fingerprint) => (fingerprint ? instances.setFingerprint(key, fingerprint) : Effect.void)),
-              Effect.forkScoped
+          const pinned = yield* Ref.make<ReadonlySet<string>>(new Set())
+
+          const rejoinWhenOlderTwin = (service: ServiceNode, key: string) => {
+            if (service.lifecycle._tag !== "LongRunning") return Effect.never
+            return instances.olderTwin(key).pipe(
+              Stream.filterEffect(() => Ref.get(pinned).pipe(Effect.map((names) => !names.has(service.name)))),
+              Stream.runHead,
+              Effect.flatMap((found) => (found._tag === "Some" ? Effect.fail(new Rejoin({ service: service.name })) : Effect.never))
             )
-            const code = service.reloads ? Effect.never : yield* signalOnChange(mine(service))
-            return yield* supervise(worktree, service, Ref.get(infraNow), readiness, { code, afterWatch })
-          })
+          }
+
+          const own: (service: ServiceNode) => Effect.Effect<void, unknown, Scope.Scope> = Effect.fnUntraced(
+            function* (service: ServiceNode) {
+              const key = instanceKey(worktree.id, service.name)
+              yield* publishOwn(worktree, service.name, (yield* SubscriptionRef.get(current))[service.name])
+              yield* mine(service).pipe(
+                Stream.runForEach((fingerprint) => (fingerprint ? instances.setFingerprint(key, fingerprint) : Effect.void)),
+                Effect.forkScoped
+              )
+              const code = service.reloads ? Effect.never : yield* signalOnChange(mine(service))
+              return yield* Effect.raceFirst(
+                supervise(worktree, service, Ref.get(infraNow), readiness, { code, afterWatch }),
+                rejoinWhenOlderTwin(service, key)
+              )
+            },
+            Effect.scoped,
+            (effect, service) =>
+              Effect.catch(effect, (error) =>
+                error instanceof Rejoin
+                  ? Effect.logInfo(`${worktree.id}/${service.name} matches an older copy again and rejoins it`).pipe(
+                      Effect.andThen(moveOn(service))
+                    )
+                  : Effect.fail(error)
+              )
+          )
 
           const reclaim = (service: ServiceNode) =>
             decisions.withPermits(1)(
@@ -748,16 +778,14 @@ export class Supervisor extends Context.Service<
                 Effect.flatMap((all) => {
                   const fingerprint = all[service.name]
                   const find = fingerprint ? instances.find(fingerprint, worktree.id) : Effect.succeed(undefined)
-                  return find.pipe(Effect.tap((found) => (found ? Effect.void : publishOwn(worktree, service.name, fingerprint))))
+                  return find
                 })
               )
             )
 
           const takeOwn = (service: ServiceNode) =>
             decisions
-              .withPermits(1)(
-                SubscriptionRef.get(current).pipe(Effect.flatMap((all) => publishOwn(worktree, service.name, all[service.name])))
-              )
+              .withPermits(1)(Ref.update(pinned, (names) => new Set([...names, service.name])))
               .pipe(
                 Effect.andThen(Effect.logInfo(`${worktree.id}/${service.name} starts its own copy on request`)),
                 Effect.andThen(own(service))
