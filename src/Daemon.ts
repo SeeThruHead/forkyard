@@ -20,6 +20,7 @@ import type { Port } from "./Ids.ts"
 import { InfraManager } from "./InfraManager.ts"
 import { Instances } from "./Instances.ts"
 import { Changes } from "./Changes.ts"
+import { Waker } from "./Waker.ts"
 import * as Platform from "./Platform.ts"
 import { Proc } from "./Proc.ts"
 import { ForkyardRpcs } from "./Protocol.ts"
@@ -181,7 +182,8 @@ export const layer = (options: DaemonOptions) => {
     Layer.provideMerge(Instances.layer),
     Layer.provideMerge(Tenants.layer),
     Layer.provideMerge(Pins.layer),
-    Layer.provideMerge(Changes.layer)
+    Layer.provideMerge(Changes.layer),
+    Layer.provideMerge(Waker.layer)
   )
 
   const servers = Layer.unwrap(

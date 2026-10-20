@@ -53,6 +53,7 @@ import {
   type Worktree
 } from "./Stack.ts"
 import { Status } from "./Status.ts"
+import { Waker } from "./Waker.ts"
 import { changesUnder } from "./Watch.ts"
 
 export class DependencyFailed extends Schema.TaggedError<DependencyFailed>()("DependencyFailed", {
@@ -179,6 +180,7 @@ export class Supervisor extends Context.Service<
         const changes = yield* Changes
         const proc = yield* Proc
         const router = yield* Router
+        const waker = yield* Waker
         const status = yield* Status
         const env = yield* EnvResolver
         const fs = yield* FileSystem.FileSystem
@@ -594,10 +596,16 @@ export class Supervisor extends Context.Service<
           )
         }, Effect.scoped)
 
-        const asleep = (worktree: Worktree, service: ServiceNode) =>
+        const wakeOnRequest = (worktree: Worktree, service: ServiceNode, wakes: boolean) => {
+          if (!wakes) return Effect.void
+          if (service.exposure._tag !== "Routed") return Effect.void
+          return waker.sleepUntilRequested(hostOf(worktree, service.name), pins.pin(worktree.id, service.name, "start"))
+        }
+
+        const asleep = (worktree: Worktree, service: ServiceNode, wakes: boolean) =>
           status
             .service(worktree.id, service.name, { ...viewOf(worktree, service, { _tag: "Waiting" }), asleep: true })
-            .pipe(Effect.andThen(Effect.never))
+            .pipe(Effect.andThen(wakeOnRequest(worktree, service, wakes)), Effect.andThen(Effect.never), Effect.scoped)
 
         const gitIn = (id: WorktreeId, root: string, ...args: ReadonlyArray<string>) =>
           changes.exec(id, root, git(...args)).pipe(
@@ -781,7 +789,7 @@ export class Supervisor extends Context.Service<
             )
 
           const runAs = (service: ServiceNode) => (placement: Placement) => {
-            if (placement === "asleep") return asleep(worktree, service)
+            if (placement === "asleep") return asleep(worktree, service, shared !== undefined)
             if (placement === "shared" && shared) return useShared(worktree, service, shared, readiness).pipe(Effect.andThen(Effect.never))
             return Effect.gen(function* () {
               yield* supervise(worktree, service, envOf(service), readiness, yield* infraMoved(service))
