@@ -28,7 +28,7 @@ export const infra = (options: Options): InfraSpec => {
   const health = options.health ?? "/health"
   const provides = options.provides ?? ((process: ProcessTenant) => ({ [`${upperSnake(options.name)}_URL`]: process.url }))
 
-  const start = Effect.fn("Process.start")(function* (_instance: string, tools: InfraTools, origin: Worktree, usesEnv: Env) {
+  const start = Effect.fn("Process.start")(function* (instance: string, tools: InfraTools, origin: Worktree, usesEnv: Env) {
     const listen = yield* port(name)
     const extra = yield* Effect.forEach(options.ports ?? [], (key) =>
       port(name).pipe(Effect.map((allocated) => [key, String(allocated)] as const))
@@ -40,7 +40,7 @@ export const infra = (options: Options): InfraSpec => {
     const started = yield* tools.spawn({
       name,
       run: toRun(options.run),
-      env: { ...usesEnv, ...options.env, ...named, [options.port]: String(listen) },
+      env: { ...usesEnv, ...options.env, ...named, FORKYARD_INFRA_INSTANCE: instance, [options.port]: String(listen) },
       cwd
     })
     yield* readyOrExit(name, started, fetchOk(`http://127.0.0.1:${listen}${health}`), "60 seconds")
