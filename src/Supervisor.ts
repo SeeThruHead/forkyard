@@ -50,6 +50,10 @@ import {
 import { Status } from "./Status.ts"
 import { changesUnder } from "./Watch.ts"
 
+export class OwnRequested extends Schema.TaggedError<OwnRequested>()("OwnRequested", {
+  service: Schema.String
+}) {}
+
 export class LenderGone extends Schema.TaggedError<LenderGone>()("LenderGone", {
   service: Schema.String
 }) {}
@@ -150,6 +154,7 @@ export class Supervisor extends Context.Service<
   {
     readonly run: (stack: Stack, worktree: Worktree) => Effect.Effect<never, unknown, Scope.Scope>
     readonly restart: (id: WorktreeId, service: ServiceName) => Effect.Effect<void>
+    readonly own: (id: WorktreeId, service: ServiceName) => Effect.Effect<void>
     readonly infraAction: (id: WorktreeId, infra: InfraName, action: string) => Effect.Effect<string, InfraError>
   }
 >()("forkyard/Supervisor") {
@@ -175,6 +180,7 @@ export class Supervisor extends Context.Service<
         const http = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk)
         const startup = yield* Semaphore.make(options.startupConcurrency)
         const restarts = yield* PubSub.unbounded<string>()
+        const ownRequests = yield* PubSub.unbounded<string>()
         const held = yield* Ref.make<
           Readonly<Record<string, { readonly spec: InfraSpec; readonly server: InfraServer; readonly worktree: Worktree }>>
         >({})
@@ -219,6 +225,13 @@ export class Supervisor extends Context.Service<
             Effect.catch(() => Effect.logWarning(`${base} is healthy but not reachable through the proxy yet`)),
             Effect.withSpan("Supervisor.waitRouted", { attributes: { "url.full": `${base}${path}` } })
           )
+
+        const ownRequested = Effect.fnUntraced(function* (worktree: Worktree, service: ServiceNode) {
+          const subscription = yield* PubSub.subscribe(ownRequests)
+          const key = restartKey(worktree.id, service.name)
+          yield* PubSub.take(subscription).pipe(Effect.repeat({ until: (requested) => requested === key }))
+          return yield* new OwnRequested({ service: service.name })
+        })
 
         const restartRequested = Effect.fnUntraced(function* (worktree: Worktree, service: ServiceNode) {
           const subscription = yield* PubSub.subscribe(restarts)
@@ -639,11 +652,12 @@ export class Supervisor extends Context.Service<
             sharedWith: found.instance.owner
           })
           yield* Effect.all(
-            [followState(worktree, service, found, readiness[service.name]!), followRoute(worktree, service, found, mine)],
-            {
-              concurrency: 2,
-              discard: true
-            }
+            [
+              followState(worktree, service, found, readiness[service.name]!),
+              followRoute(worktree, service, found, mine),
+              ownRequested(worktree, service)
+            ],
+            { concurrency: 3, discard: true }
           )
         })
 
@@ -739,6 +753,16 @@ export class Supervisor extends Context.Service<
               )
             )
 
+          const takeOwn = (service: ServiceNode) =>
+            decisions
+              .withPermits(1)(
+                SubscriptionRef.get(current).pipe(Effect.flatMap((all) => publishOwn(worktree, service.name, all[service.name])))
+              )
+              .pipe(
+                Effect.andThen(Effect.logInfo(`${worktree.id}/${service.name} starts its own copy on request`)),
+                Effect.andThen(own(service))
+              )
+
           const moveOn = (service: ServiceNode): Effect.Effect<void, unknown, Scope.Scope> =>
             reclaim(service).pipe(
               Effect.flatMap((found) =>
@@ -753,7 +777,11 @@ export class Supervisor extends Context.Service<
           const shareOrOwn = (service: ServiceNode, found: Found | undefined): Effect.Effect<void, unknown, Scope.Scope> => {
             if (!found) return own(service)
             return borrow(worktree, service, found, readiness, mine(service)).pipe(
-              Effect.catch((error) => (error instanceof LenderGone ? moveOn(service) : Effect.fail(error)))
+              Effect.catch((error) => {
+                if (error instanceof LenderGone) return moveOn(service)
+                if (error instanceof OwnRequested) return takeOwn(service)
+                return Effect.fail(error)
+              })
             )
           }
 
@@ -768,6 +796,7 @@ export class Supervisor extends Context.Service<
         return Supervisor.of({
           run,
           restart: (id, service) => PubSub.publish(restarts, restartKey(id, service)).pipe(Effect.asVoid),
+          own: (id, service) => PubSub.publish(ownRequests, restartKey(id, service)).pipe(Effect.asVoid),
           infraAction
         })
       })

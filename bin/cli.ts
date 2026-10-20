@@ -176,6 +176,16 @@ const env = Command.make("env", { service: serviceArgument }, ({ service }) =>
   }).pipe(Effect.scoped, Effect.provide(client))
 ).pipe(Command.withDescription("Show the env a service was started with, and where each value came from"))
 
+const ownCommand = Command.make("own", { service: serviceArgument }, ({ service }) =>
+  Effect.gen(function* () {
+    const forkyard = yield* ForkyardClient
+    const worktree = yield* runningHere()
+    const name = yield* parseService(service)
+    yield* forkyard.Own({ id: worktree.id, service: name })
+    yield* Console.log(`${worktree.id} now runs its own ${service}`)
+  }).pipe(Effect.scoped, Effect.provide(client))
+).pipe(Command.withDescription("Run this worktree's own copy of a service instead of sharing one, before you change it"))
+
 const logs = Command.make("logs", { service: serviceArgument }, ({ service }) =>
   Effect.gen(function* () {
     const forkyard = yield* ForkyardClient
@@ -236,7 +246,7 @@ const update = Command.make("update", {}, () => Service.update).pipe(
 )
 
 const forkyard = Command.make("forkyard").pipe(
-  Command.withSubcommands([daemon, up, down, status, env, logs, attach, infraCommand, service, update])
+  Command.withSubcommands([daemon, up, down, status, env, ownCommand, logs, attach, infraCommand, service, update])
 )
 
 const messageOf = (error: unknown): string => {

@@ -25,6 +25,7 @@ export class ForkyardRpcs extends RpcGroup.make(
   Rpc.make("Logs", { payload: InWorktree, success: LogLine, stream: true }),
   Rpc.make("Env", { payload: { ...InWorktree, service: ServiceName }, success: Schema.Array(EnvVar), error: ForkyardError }),
   Rpc.make("Restart", { payload: { ...InWorktree, service: ServiceName } }),
+  Rpc.make("Own", { payload: { ...InWorktree, service: ServiceName } }),
   Rpc.make("Runs", { payload: { owner: ProcessOwner, service: Schema.String }, success: Schema.Array(RunInfo) }),
   Rpc.make("RunLog", { payload: { runId: RunId }, success: RunLine, stream: true }),
   Rpc.make("Routes", { success: Schema.Record(Schema.String, Schema.Number) }),
