@@ -14,10 +14,10 @@ macOS and Linux. Windows is supported through WSL, which is Linux; native Window
 
 ## How forkyard starts
 
-Forkyard runs on Node 24+ or Bun, and is installed twice: globally for the command, and in each repo as a dev dependency next to `effect`.
+Forkyard runs on Node 24+ or Bun. Each repo installs it as a dev dependency next to `effect`, and that copy is the one that runs, so a repo always runs the version it pinned. The global command is a stub, like `eslint` or `gulp-cli`.
 
-1. `launcher/forkyard` is the installed command. It picks the runtime in `pick_runtime`: `FORKYARD_RUNTIME` if set, Bun if forkyard was installed with `bun add -g`, otherwise Node 24+, and Bun only when there is no Node.
-2. `bin/forkyard.ts` hands over to the repo's own forkyard when the current folder has one in `node_modules`, passing the runtime along, so a repo always runs the version it pinned. `daemon`, `service` and `update` never hand over: one daemon serves every repo.
+1. `cli/forkyard` (the `forkyard-cli` package) is the only thing installed globally. It finds the nearest `node_modules/forkyard` above the current folder and runs that copy's launcher. Outside a repo with forkyard installed it stops and says so. It does nothing else, so it never needs updating.
+2. `launcher/forkyard` is the package's command. In a source checkout (a `.git` folder, as when a repo links to a clone of forkyard) it runs `bin/forkyard`, the TypeScript source. Otherwise it picks the runtime in `pick_runtime`: `FORKYARD_RUNTIME` if set, Bun if forkyard was installed with `bun add -g`, otherwise Node 24+, and Bun only when there is no Node.
 3. `bin/cli.ts` is the CLI.
 
 A config imports `forkyard` and `effect` from its repo's `node_modules`, like any other package; the daemon loads it with a plain `import()`. Two things differ by runtime: the SQLite driver in `src/Database.ts` (chosen by `src/platform/Runtime.ts`), and restarting a foreground daemon after an upgrade in `src/platform/Os.ts`, which replaces the process on Node and runs a fresh one on Bun, which has no `execve`.

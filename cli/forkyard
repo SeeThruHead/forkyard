@@ -1,0 +1,19 @@
+#!/bin/sh
+find_local() {
+  dir="$1"
+  while :; do
+    if [ -x "$dir/node_modules/forkyard/launcher/forkyard" ]; then
+      echo "$dir/node_modules/forkyard/launcher/forkyard"
+      return 0
+    fi
+    [ "$dir" = "/" ] && return 1
+    dir="$(dirname "$dir")"
+  done
+}
+
+if ! launcher="$(find_local "$PWD")"; then
+  echo "forkyard is not installed in $PWD or any folder above it. Add it to the repo: pnpm add -D forkyard" >&2
+  exit 1
+fi
+
+exec "$launcher" "$@"

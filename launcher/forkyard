@@ -1,6 +1,9 @@
 #!/bin/sh
 self="$(realpath "$0")"
-entry="$(dirname "$self")/../dist/bin/forkyard.js"
+root="$(dirname "$self")/.."
+entry="$root/dist/bin/forkyard.js"
+
+if [ -d "$root/.git" ]; then exec "$root/bin/forkyard" "$@"; fi
 
 installed_by_bun() {
   case "$self" in

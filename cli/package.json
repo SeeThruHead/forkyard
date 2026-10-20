@@ -1,0 +1,12 @@
+{
+  "name": "forkyard-cli",
+  "version": "1.0.0",
+  "description": "The global forkyard command. It runs the forkyard installed in the repo you are in.",
+  "license": "MIT",
+  "bin": {
+    "forkyard": "forkyard"
+  },
+  "files": [
+    "forkyard"
+  ]
+}

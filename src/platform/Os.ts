@@ -45,9 +45,6 @@ const readTable = (command: string, args: ReadonlyArray<string>) =>
     Effect.orElseSucceed((): ReadonlyArray<ProcessRow> => [])
   )
 
-export const runInstead = (launcher: string, args: ReadonlyArray<string>, env: Record<string, string>) =>
-  spawnSync(launcher, [...args], { stdio: "inherit", env: { ...process.env, ...env } }).status ?? 1
-
 const ownCommand = () => [...process.execArgv, ...process.argv.slice(1)]
 
 const replaceSelf = Effect.sync(() => {
