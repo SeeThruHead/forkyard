@@ -75,11 +75,11 @@ export const codeHash = (snapshot: Snapshot, inputs: Inputs) => {
   )
 }
 
-export const envHash = (env: Readonly<Record<string, string>>, ownDomain: string, ignored: ReadonlyArray<string>) =>
+export const envHash = (env: Readonly<Record<string, string>>, domains: ReadonlyArray<string>, ignored: ReadonlyArray<string>) =>
   sha256(
     Object.entries(env)
       .filter(([key]) => !ignored.includes(key))
-      .map(([key, value]) => `${key}=${value.replaceAll(ownDomain, "@")}`)
+      .map(([key, value]) => `${key}=${domains.reduce((text, domain) => text.replaceAll(domain, "@"), value)}`)
       .sort()
       .join("\n")
   )

@@ -322,6 +322,7 @@ export class Supervisor extends Context.Service<
             ? yield* session.services({
                 services,
                 infra: infraFingerprints,
+                base,
                 envOf: (service) => resolveEnv(worktree, service, ownedEnvFor(service, infraEnv), undefined)
               })
             : { fingerprints: {}, references: {} }

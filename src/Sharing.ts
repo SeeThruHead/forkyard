@@ -55,6 +55,7 @@ const runText = (run: Run) => ("shell" in run ? run.shell : [run.command, ...run
 
 const serviceFingerprint = (
   worktree: Worktree,
+  domains: ReadonlyArray<string>,
   service: ServiceNode,
   hash: string,
   env: Readonly<Record<string, string>>,
@@ -63,14 +64,7 @@ const serviceFingerprint = (
   const ignored = [...forkyardKeys, ...service.ports]
   const normalized = Object.fromEntries(Object.entries(env).map(([key, value]) => [key, value.replaceAll(worktree.root, "@root")]))
   const usedInfra = service.uses.map((name) => infra[name] ?? "").sort()
-  return combine(
-    hash,
-    runText(service.run),
-    service.cwd,
-    service.lifecycle._tag,
-    envHash(normalized, worktree.domain, ignored),
-    ...usedInfra
-  )
+  return combine(hash, runText(service.run), service.cwd, service.lifecycle._tag, envHash(normalized, domains, ignored), ...usedInfra)
 }
 
 export type ServiceFingerprints = {
@@ -84,6 +78,7 @@ export type Session = {
     readonly services: ReadonlyArray<ServiceNode>
     readonly infra: Readonly<Record<string, string>>
     readonly envOf: (service: ServiceNode) => Effect.Effect<Readonly<Record<string, string>>, unknown>
+    readonly base: Worktree | undefined
   }) => Effect.Effect<ServiceFingerprints, unknown>
 }
 
@@ -139,7 +134,21 @@ export class Sharing extends Context.Service<
           )
           const fingerprints = Object.fromEntries(
             resolved.flatMap(({ service, hash, env }) =>
-              hash === undefined ? [] : [[service.name, serviceFingerprint(worktree, service, hash, env, options.infra)] as const]
+              hash === undefined
+                ? []
+                : [
+                    [
+                      service.name,
+                      serviceFingerprint(
+                        worktree,
+                        [worktree.domain, ...(options.base ? [options.base.domain] : [])],
+                        service,
+                        hash,
+                        env,
+                        options.infra
+                      )
+                    ] as const
+                  ]
             )
           )
           const references = Object.fromEntries(resolved.map(({ service, env }) => [service.name, referencesOf(env, worktree, names)]))
