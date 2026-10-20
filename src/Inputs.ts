@@ -6,21 +6,16 @@ export class InputsError extends Schema.TaggedError<InputsError>()("InputsError"
   message: Schema.String
 }) {}
 
-export type Inputs = { readonly paths: ReadonlyArray<string>; readonly extra?: ReadonlyArray<string> } | { readonly hash: string }
+export type Inputs = { readonly paths: ReadonlyArray<string> } | { readonly hash: string }
 
 export type InputsTarget = { readonly name: string; readonly kind: "service" | "infra" }
 
 export type InputsContext = {
   readonly root: string
   readonly exec: (run: Run) => Effect.Effect<string, InputsError, Scope.Scope>
-  readonly fileHash: (path: string) => string | undefined
 }
 
 export type InputsHook = (target: InputsTarget, context: InputsContext) => Effect.Effect<Inputs | undefined, InputsError, Scope.Scope>
-
-export type InputsSource = InputsHook | Effect.Effect<InputsHook>
-
-export const hookOf = (source: InputsSource) => (Effect.isEffect(source) ? source : Effect.succeed(source))
 
 export type Snapshot = {
   readonly tracked: ReadonlyMap<string, string>
@@ -73,10 +68,10 @@ export const codeHash = (snapshot: Snapshot, inputs: Inputs) => {
     ...[...snapshot.changed].filter(([file]) => inside(file))
   ])
   return sha256(
-    [
-      ...[...files].sort(([a], [b]) => (a < b ? -1 : 1)).map(([file, hash]) => `${file}\0${hash}`),
-      ...(inputs.extra ?? []).map((extra) => `extra\0${extra}`)
-    ].join("\n")
+    [...files]
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([file, hash]) => `${file}\0${hash}`)
+      .join("\n")
   )
 }
 
@@ -88,7 +83,5 @@ export const envHash = (env: Readonly<Record<string, string>>, domains: Readonly
       .sort()
       .join("\n")
   )
-
-export const fileHashIn = (snapshot: Snapshot) => (path: string) => snapshot.changed.get(path) ?? snapshot.tracked.get(path)
 
 export const combine = (...parts: ReadonlyArray<string>) => sha256(parts.join("|"))

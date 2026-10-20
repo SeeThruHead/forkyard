@@ -1,5 +1,5 @@
 export * as Env from "./EnvSource.ts"
-export type { Inputs, InputsContext, InputsHook, InputsSource, InputsTarget } from "./Inputs.ts"
+export type { Inputs, InputsContext, InputsHook, InputsTarget } from "./Inputs.ts"
 export { defineStack } from "./Define.ts"
 export * as Nats from "./infra/Nats.ts"
 export * as Postgres from "./infra/Postgres.ts"
