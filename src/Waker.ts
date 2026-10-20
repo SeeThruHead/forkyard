@@ -14,9 +14,13 @@ const hostOf = (header: string | undefined) => (header ?? "").split(":")[0] ?? "
 
 const hasBody = (method: string) => method !== "GET" && method !== "HEAD"
 
+const without = <A>(all: Readonly<Record<string, A>>, host: string) =>
+  Object.fromEntries(Object.entries(all).filter(([key]) => key !== host))
+
 export class Waker extends Context.Service<
   Waker,
   {
+    readonly holdWhileDown: (host: string) => Effect.Effect<void, never, Scope.Scope>
     readonly sleepUntilRequested: (host: string, wake: Effect.Effect<void>) => Effect.Effect<void, never, Scope.Scope>
   }
 >()("forkyard/Waker") {
@@ -26,13 +30,16 @@ export class Waker extends Context.Service<
       const server = yield* HttpServer.HttpServer
       const router = yield* Router
       const http = yield* HttpClient.HttpClient
+      const held = yield* Ref.make<Readonly<Record<string, true>>>({})
       const sleeping = yield* Ref.make<Readonly<Record<string, Effect.Effect<void>>>>({})
       const port = Port.make("port" in server.address ? server.address.port : 0)
+
+      const elsewhere = (target: Port | undefined): target is Port => target !== undefined && target !== port
 
       const awakePort = (host: string) =>
         router.routes.pipe(
           Effect.map((routes) => routes[host]?.port),
-          Effect.filterOrFail((target): target is Port => target !== undefined && target !== port),
+          Effect.filterOrFail(elsewhere),
           Effect.retry({ schedule: Schedule.spaced("200 millis") }),
           Effect.timeout("3 minutes")
         )
@@ -51,17 +58,22 @@ export class Waker extends Context.Service<
             )
           )
 
-      const wakeAndForward = Effect.fn("Waker.wake")(function* (request: HttpServerRequest.HttpServerRequest) {
-        const host = hostOf(request.headers["host"])
+      const wakeIfAsleep = Effect.fn("Waker.wakeIfAsleep")(function* (host: string) {
         const wake = (yield* Ref.get(sleeping))[host]
-        if (!wake) return HttpServerResponse.text(`nothing is asleep at ${host}`, { status: 404 })
+        if (!wake) return
         yield* Effect.logInfo(`${host} was asked for while asleep; starting it`)
         yield* wake
+      })
+
+      const holdAndForward = Effect.fn("Waker.holdAndForward")(function* (request: HttpServerRequest.HttpServerRequest) {
+        const host = hostOf(request.headers["host"])
+        if (!(yield* Ref.get(held))[host]) return HttpServerResponse.text(`forkyard serves nothing at ${host}`, { status: 404 })
+        yield* wakeIfAsleep(host)
         return yield* forward(request, yield* awakePort(host))
       })
 
       const handle = HttpServerRequest.HttpServerRequest.pipe(
-        Effect.flatMap(wakeAndForward),
+        Effect.flatMap(holdAndForward),
         Effect.catchCause((cause) =>
           Effect.succeed(
             HttpServerResponse.text(`forkyard could not start this service: ${Cause.pretty(cause).split("\n")[0]}`, { status: 502 })
@@ -71,13 +83,19 @@ export class Waker extends Context.Service<
 
       yield* server.serve(handle)
 
+      const holdWhileDown = (host: string) =>
+        Effect.acquireRelease(
+          Ref.update(held, (all) => ({ ...all, [host]: true as const })),
+          () => Ref.update(held, (all) => without(all, host))
+        ).pipe(Effect.andThen(router.fallback({ host, port })))
+
       const sleepUntilRequested = (host: string, wake: Effect.Effect<void>) =>
         Effect.acquireRelease(
           Ref.update(sleeping, (all) => ({ ...all, [host]: wake })),
-          () => Ref.update(sleeping, (all) => Object.fromEntries(Object.entries(all).filter(([sleeper]) => sleeper !== host)))
-        ).pipe(Effect.andThen(router.expose({ host, port })))
+          () => Ref.update(sleeping, (all) => without(all, host))
+        ).pipe(Effect.asVoid)
 
-      return Waker.of({ sleepUntilRequested })
+      return Waker.of({ holdWhileDown, sleepUntilRequested })
     })
   ).pipe(
     Layer.provide(NodeHttpServer.layerServer(createServer, { port: 0, host: "127.0.0.1" })),

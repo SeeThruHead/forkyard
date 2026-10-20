@@ -36,10 +36,15 @@ export const withHostsBlock = (content: string, hosts: ReadonlyArray<string>) =>
   return `${base}\n${hostsBegin}\n${hosts.map((host) => `127.0.0.1 ${host}`).join("\n")}\n${hostsEnd}\n`
 }
 
+type Layers = { readonly exposed: Readonly<Record<string, Route>>; readonly fallbacks: Readonly<Record<string, Route>> }
+
+const effective = (layers: Layers): Readonly<Record<string, Route>> => ({ ...layers.fallbacks, ...layers.exposed })
+
 export class Router extends Context.Service<
   Router,
   {
     readonly expose: (route: Route) => Effect.Effect<void, never, Scope.Scope>
+    readonly fallback: (route: Route) => Effect.Effect<void, never, Scope.Scope>
     readonly routes: Effect.Effect<Readonly<Record<string, Route>>>
   }
 >()("forkyard/Router") {
@@ -49,7 +54,7 @@ export class Router extends Context.Service<
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
         const path = yield* Path.Path
-        const state = yield* SubscriptionRef.make<Readonly<Record<string, Route>>>({})
+        const state = yield* SubscriptionRef.make<Layers>({ exposed: {}, fallbacks: {} })
 
         const writeHosts = Effect.fn("Router.writeHosts")(function* (file: string, hosts: ReadonlyArray<string>) {
           const current = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""))
@@ -69,14 +74,24 @@ export class Router extends Context.Service<
           Effect.catchCause((cause) => Effect.logError("could not write the routes; the next change retries", cause))
         )
 
-        yield* SubscriptionRef.changes(state).pipe(Stream.debounce("50 millis"), Stream.runForEach(write), Effect.forkScoped)
+        yield* SubscriptionRef.changes(state).pipe(
+          Stream.map(effective),
+          Stream.debounce("50 millis"),
+          Stream.runForEach(write),
+          Effect.forkScoped
+        )
 
-        const expose = (route: Route) =>
-          Effect.acquireRelease(SubscriptionRef.update(state, Record.set(route.host, route)), () =>
-            SubscriptionRef.update(state, Record.remove(route.host))
+        const layered = (layer: keyof Layers) => (route: Route) =>
+          Effect.acquireRelease(
+            SubscriptionRef.update(state, (all) => ({ ...all, [layer]: Record.set(all[layer], route.host, route) })),
+            () => SubscriptionRef.update(state, (all) => ({ ...all, [layer]: Record.remove(all[layer], route.host) }))
           ).pipe(Effect.asVoid)
 
-        return Router.of({ expose, routes: SubscriptionRef.get(state) })
+        return Router.of({
+          expose: layered("exposed"),
+          fallback: layered("fallbacks"),
+          routes: SubscriptionRef.get(state).pipe(Effect.map(effective))
+        })
       })
     )
 }

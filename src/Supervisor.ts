@@ -600,6 +600,12 @@ export class Supervisor extends Context.Service<
           )
         }, Effect.scoped)
 
+        const holdWhileDown = (worktree: Worktree, service: ServiceNode, wakes: boolean) => {
+          if (!wakes) return Effect.void
+          if (service.exposure._tag !== "Routed") return Effect.void
+          return waker.holdWhileDown(hostOf(worktree, service.name))
+        }
+
         const wakeOnRequest = (worktree: Worktree, service: ServiceNode, wakes: boolean) => {
           if (!wakes) return Effect.void
           if (service.exposure._tag !== "Routed") return Effect.void
@@ -847,10 +853,14 @@ export class Supervisor extends Context.Service<
           yield* Effect.forEach(
             services,
             (service) =>
-              placementOf(service).pipe(
-                Stream.switchMap((placement) => Stream.fromEffect(runAs(service)(placement))),
-                Stream.runDrain,
-                Effect.forkScoped
+              holdWhileDown(worktree, service, shared !== undefined).pipe(
+                Effect.andThen(
+                  placementOf(service).pipe(
+                    Stream.switchMap((placement) => Stream.fromEffect(runAs(service)(placement))),
+                    Stream.runDrain,
+                    Effect.forkScoped
+                  )
+                )
               ),
             { discard: true }
           )
