@@ -704,6 +704,7 @@ export class Supervisor extends Context.Service<
           const infraNodes = nodes.filter(isInfra)
           const services = nodes.filter(isService)
           const specs = Object.fromEntries(infraNodes.map((node) => [node.spec.name, node.spec]))
+          const common = new Set<string>(infraNodes.filter((node) => node.spec.sharedBy !== undefined).map((node) => node.spec.name))
           const everything = new Set([...services.map((service) => service.name), ...infraNodes.map((node) => node.spec.name)])
           const readiness = yield* readinessOf(services)
           const shared = mode === "worktree" && stack.shared ? yield* joinShared(stack, worktree) : undefined
@@ -745,12 +746,20 @@ export class Supervisor extends Context.Service<
           if (shared) {
             yield* Stream.zipLatest(pins.changes(worktree.id, "own"), pins.changes(worktree.id, "start")).pipe(
               Stream.runForEach(([own, started]) =>
-                placeLocal(localNames(services, own)).pipe(Effect.andThen(demand(rootsOf(services, own, started))))
+                placeLocal(localNames(services, own, common)).pipe(Effect.andThen(demand(rootsOf(services, own, started))))
               ),
               Effect.forkScoped
             )
             if (stack.inputs)
-              yield* followChanges(worktree, yield* changes.session(stack.inputs, worktree), targetsOf(services, infraNodes), shared.base)
+              yield* followChanges(
+                worktree,
+                yield* changes.session(stack.inputs, worktree),
+                targetsOf(
+                  services,
+                  infraNodes.filter((node) => !common.has(node.spec.name))
+                ),
+                shared.base
+              )
           }
 
           const infraMoved = (service: ServiceNode) =>

@@ -149,6 +149,8 @@ export const usageOfPids = (usage: UsageMap, pids: ReadonlyArray<number>) => sum
 
 export const stateLabel = (state: ServiceState) => state._tag.toLowerCase()
 
+export const viewLabel = (view: ServiceView) => (view.asleep ? "asleep" : stateLabel(view.state))
+
 export const stateDetail = (state: ServiceState) => ("reason" in state ? state.reason : undefined)
 
 export const isSettledState = (state: ServiceState) => state._tag === "Ready" || state._tag === "Done" || state._tag === "Failed"

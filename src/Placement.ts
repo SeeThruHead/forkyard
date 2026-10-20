@@ -20,22 +20,26 @@ const settle = (services: ReadonlyArray<ServiceNode>, local: ReadonlySet<string>
 const neededBy = (services: ReadonlyArray<ServiceNode>, local: ReadonlySet<string>, task: ServiceNode) =>
   services.some((service) => local.has(service.name) && service.after.includes(task.name))
 
-const runsHere = (services: ReadonlyArray<ServiceNode>, local: ReadonlySet<string>) => (task: ServiceNode) => {
+const runsHere = (services: ReadonlyArray<ServiceNode>, local: ReadonlySet<string>, common: ReadonlySet<string>) => (task: ServiceNode) => {
   if (local.has(task.name)) return false
   if (!neededBy(services, local, task)) return false
-  return task.uses.every((infra) => local.has(infra))
+  return task.uses.filter((infra) => !common.has(infra)).every((infra) => local.has(infra))
 }
 
-const withTasks = (services: ReadonlyArray<ServiceNode>, local: ReadonlySet<string>): ReadonlySet<string> => {
-  const tasks = services.filter(isTask).filter(runsHere(services, local))
+const withTasks = (services: ReadonlyArray<ServiceNode>, local: ReadonlySet<string>, common: ReadonlySet<string>): ReadonlySet<string> => {
+  const tasks = services.filter(isTask).filter(runsHere(services, local, common))
   if (tasks.length === 0) return local
-  return withTasks(services, new Set([...local, ...tasks.map((task) => task.name)]))
+  return withTasks(services, new Set([...local, ...tasks.map((task) => task.name)]), common)
 }
 
-export const localNames = (services: ReadonlyArray<ServiceNode>, seeds: ReadonlySet<string>): ReadonlySet<string> => {
+export const localNames = (
+  services: ReadonlyArray<ServiceNode>,
+  seeds: ReadonlySet<string>,
+  common: ReadonlySet<string> = new Set()
+): ReadonlySet<string> => {
   const taskNames = new Set<string>(services.filter(isTask).map((task) => task.name))
-  const untasked = new Set([...seeds].filter((name) => !taskNames.has(name)))
-  return withTasks(services, settle(services, untasked))
+  const placeable = new Set([...seeds].filter((name) => !taskNames.has(name) && !common.has(name)))
+  return withTasks(services, settle(services, placeable), common)
 }
 
 const dependenciesOf = (services: ReadonlyArray<ServiceNode>, names: ReadonlySet<string>) =>

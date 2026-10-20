@@ -9,7 +9,7 @@ import { packageVersion, protocolVersion } from "../src/Package.ts"
 import { layer as osLayer, Os, unsupportedHere } from "../src/platform/Os.ts"
 import type { View } from "../tui/View.ts"
 import * as Service from "./service.ts"
-import { type EnvVar, isSettled, runOf, serviceUrl, type Snapshot, stateDetail, stateLabel, type WorktreeView } from "../src/Model.ts"
+import { type EnvVar, isSettled, runOf, serviceUrl, type Snapshot, stateDetail, viewLabel, type WorktreeView } from "../src/Model.ts"
 
 const home = process.env.FORKYARD_HOME ?? defaultHome
 
@@ -74,7 +74,7 @@ const describe = (worktree: WorktreeView) => {
   )
   const services = Object.entries(worktree.services).map(
     ([name, view]) =>
-      `  ${name.padEnd(14)} ${stateLabel(view.state).padEnd(10)} ${serviceUrl(view) ?? stateDetail(view.state) ?? ""}${view.sharedWith ? `  (shared with ${view.sharedWith})` : ""}`
+      `  ${name.padEnd(14)} ${viewLabel(view).padEnd(10)} ${serviceUrl(view) ?? stateDetail(view.state) ?? ""}${view.sharedWith ? `  (shared with ${view.sharedWith})` : ""}`
   )
 
   return [...infra, ...services].join("\n")

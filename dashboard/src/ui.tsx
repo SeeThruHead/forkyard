@@ -10,7 +10,7 @@ import {
   type ServiceView,
   type Snapshot,
   stateDetail,
-  stateLabel,
+  viewLabel,
   type WorktreeView
 } from "../../src/Model.ts"
 import { envAtom, envKey, restartAtom, runLogAtom, runsAtom, runsKey } from "./forkyard.ts"
@@ -55,7 +55,7 @@ const ChipBody = ({ name }: { readonly name: string }) => (
 
 export const ServiceChip = ({ name, view }: { readonly name: string; readonly view: ServiceView }) => {
   const url = serviceUrl(view)
-  const label = stateLabel(view.state)
+  const label = viewLabel(view)
 
   if (url)
     return (

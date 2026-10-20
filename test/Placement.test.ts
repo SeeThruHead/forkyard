@@ -18,7 +18,7 @@ const node = (name: string, shape: Shape = {}): ServiceNode => ({
   cwd: ".",
   env: {},
   envFrom: [],
-  uses: [...(shape.uses ?? []), ...(shape.consumes ?? [])].map((infra) => InfraName.make(infra)),
+  uses: ["telemetry", ...(shape.uses ?? []), ...(shape.consumes ?? [])].map((infra) => InfraName.make(infra)),
   consumes: (shape.consumes ?? []).map((infra) => InfraName.make(infra)),
   after: (shape.after ?? []).map((dependency) => ServiceName.make(dependency)),
   calls: (shape.calls ?? []).map((callee) => ServiceName.make(callee)),
@@ -40,43 +40,50 @@ const shop = [
   node("handlers", { after: ["install"], uses: ["postgres"], consumes: ["nats"] })
 ]
 
-const sorted = (names: ReadonlySet<string>) => [...names].sort()
+const common = new Set(["telemetry"])
+
+const place = (...changed: ReadonlyArray<string>) => [...localNames(shop, new Set(changed), common)].sort()
 
 describe("placement", () => {
   it("a frontend change runs only the frontend and the tasks that prepare its folder", () => {
-    expect(sorted(localNames(shop, new Set(["admin"])))).toEqual(["admin", "codegen", "install"])
+    expect(place("admin")).toEqual(["admin", "codegen", "install"])
   })
 
   it("a backend change also runs everything that calls it, and consumers it brings along get their own queue", () => {
-    expect(sorted(localNames(shop, new Set(["api"])))).toEqual([
+    expect(place("api")).toEqual(["admin", "api", "codegen", "graph", "handlers", "install", "nats", "payments"])
+  })
+
+  it("a migration gives the worktree its own database, and everything using it runs here, migrate included", () => {
+    expect(place("postgres")).toEqual([
       "admin",
       "api",
       "codegen",
       "graph",
       "handlers",
       "install",
+      "migrate",
       "nats",
-      "payments"
+      "payments",
+      "postgres"
     ])
   })
 
-  it("a migration gives the worktree its own database, and everything using it runs here, migrate included", () => {
-    const local = localNames(shop, new Set(["postgres"]))
-    expect(sorted(local)).toEqual(["admin", "api", "codegen", "graph", "handlers", "install", "migrate", "nats", "payments", "postgres"])
-  })
-
   it("a consumer that runs here gets its own copy of what it consumes, so it never takes shared messages", () => {
-    const local = localNames(shop, new Set(["handlers"]))
-    expect(local.has("nats")).toBe(true)
-    expect(local.has("api")).toBe(true)
-    expect(local.has("postgres")).toBe(false)
+    expect(place("handlers")).toContain("nats")
+    expect(place("handlers")).toContain("api")
+    expect(place("handlers")).not.toContain("postgres")
   })
 
   it("tasks that touch shared infra stay shared, even when something here needs them", () => {
-    expect(localNames(shop, new Set(["api"])).has("migrate")).toBe(false)
+    expect(place("api")).not.toContain("migrate")
+  })
+
+  it("infra every worktree uses as-is, like telemetry, never decides where something runs", () => {
+    expect(place("telemetry")).toEqual([])
+    expect([...localNames(shop, new Set(["admin"]))]).not.toContain("install")
   })
 
   it("starting a service starts what it waits on, and nothing else", () => {
-    expect(sorted(demandedNames(shop, new Set(["admin"])))).toEqual(["admin", "api", "codegen", "graph", "install", "migrate"])
+    expect([...demandedNames(shop, new Set(["admin"]))].sort()).toEqual(["admin", "api", "codegen", "graph", "install", "migrate"])
   })
 })
