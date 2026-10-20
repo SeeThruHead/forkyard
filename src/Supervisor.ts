@@ -714,6 +714,18 @@ export class Supervisor extends Context.Service<
               Effect.andThen(leaseInfra(runScope, worktree, lease.spec, fingerprint))
             )
 
+          const fingerprintsAfter = (refreshed: Refreshed, infraMoved: boolean, afterEnv: InfraEnv) => {
+            if (!infraMoved) return Effect.succeed(refreshed.services)
+            if (!session) return Effect.succeed(refreshed.services)
+            return session
+              .services({
+                services,
+                infra: refreshed.infra,
+                envOf: (service) => resolveEnv(worktree, service, ownedEnvFor(service, afterEnv), undefined)
+              })
+              .pipe(Effect.map((measured) => measured.fingerprints))
+          }
+
           const applyRefresh = Effect.fnUntraced(function* (refreshed: Refreshed) {
             const before = yield* Ref.get(leased)
             const changed = before.filter((lease) => refreshed.infra[lease.spec.name] !== lease.fingerprint)
@@ -721,9 +733,10 @@ export class Supervisor extends Context.Service<
               concurrency: "unbounded"
             })
             const after = [...before.filter((lease) => !changed.includes(lease)), ...moved]
+            const afterEnv = envOfLeases(after)
             yield* Ref.set(leased, after)
-            yield* Ref.set(infraNow, envOfLeases(after))
-            yield* SubscriptionRef.set(current, refreshed.services)
+            yield* Ref.set(infraNow, afterEnv)
+            yield* SubscriptionRef.set(current, yield* fingerprintsAfter(refreshed, changed.length > 0, afterEnv))
             yield* SubscriptionRef.update(generation, (count) => count + 1)
             yield* Effect.forEach(changed, (lease) => Scope.close(lease.scope, Exit.void), { discard: true })
           })
@@ -752,7 +765,13 @@ export class Supervisor extends Context.Service<
               const key = instanceKey(worktree.id, service.name)
               yield* publishOwn(worktree, service.name, (yield* SubscriptionRef.get(current))[service.name])
               yield* mine(service).pipe(
-                Stream.runForEach((fingerprint) => (fingerprint ? instances.setFingerprint(key, fingerprint) : Effect.void)),
+                Stream.runForEach((fingerprint) =>
+                  fingerprint
+                    ? instances
+                        .setFingerprint(key, fingerprint)
+                        .pipe(Effect.andThen(Effect.logDebug(`${key} fingerprint ${fingerprint.slice(0, 10)}`)))
+                    : Effect.void
+                ),
                 Effect.forkScoped
               )
               const code = service.reloads ? Effect.never : yield* signalOnChange(mine(service))
