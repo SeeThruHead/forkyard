@@ -18,6 +18,8 @@ import { ProcessUsage } from "./Usage.ts"
 import { EnvResolver } from "./Env.ts"
 import type { Port } from "./Ids.ts"
 import { InfraManager } from "./InfraManager.ts"
+import { Instances } from "./Instances.ts"
+import { Sharing } from "./Sharing.ts"
 import * as Platform from "./Platform.ts"
 import { Proc } from "./Proc.ts"
 import { ForkyardRpcs } from "./Protocol.ts"
@@ -167,7 +169,9 @@ export const layer = (options: DaemonOptions) => {
       Supervisor.layer({ startupConcurrency: options.startupConcurrency, otlpUrl, otlpHeaders: otlpHeadersOf(options.telemetry) })
     ),
     Layer.provideMerge(EnvResolver.layer),
-    Layer.provideMerge(InfraManager.layer({ domain: options.domain }))
+    Layer.provideMerge(InfraManager.layer({ domain: options.domain })),
+    Layer.provideMerge(Instances.layer),
+    Layer.provideMerge(Sharing.layer)
   )
 
   const servers = Layer.unwrap(

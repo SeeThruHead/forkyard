@@ -15,7 +15,11 @@
     "noEmit": true,
     "types": ["node"],
     "customConditions": ["forkyard-source"],
-    "paths": { "forkyard": ["./src/index.ts"], "forkyard/client": ["./src/Client.ts"] }
+    "paths": {
+      "forkyard": ["./src/index.ts"],
+      "forkyard/client": ["./src/Client.ts"],
+      "forkyard/inputs/moon": ["./src/inputs/Moon.ts"]
+    }
   },
   "include": [
     "src",

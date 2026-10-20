@@ -23,6 +23,11 @@
       "forkyard-source": "./src/Client.ts",
       "types": "./dist/src/Client.d.ts",
       "default": "./dist/src/Client.js"
+    },
+    "./inputs/moon": {
+      "forkyard-source": "./src/inputs/Moon.ts",
+      "types": "./dist/src/inputs/Moon.d.ts",
+      "default": "./dist/src/inputs/Moon.js"
     }
   },
   "scripts": {

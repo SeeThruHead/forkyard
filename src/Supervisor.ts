@@ -14,13 +14,15 @@ import {
   Schema,
   Ref,
   Semaphore,
-  type Scope
+  type Scope,
+  Stream
 } from "effect"
 import { HttpClient } from "effect/http"
 import { daemonEnv, EnvResolver, owned, type OwnedEnv, telemetryDefaults } from "./Env.ts"
 import type { InfraName, Port, ServiceName, WorktreeId } from "./Ids.ts"
 import { ownerOfWorktree } from "./Ids.ts"
 import { InfraManager } from "./InfraManager.ts"
+import { infraKey, instanceKey, Instances } from "./Instances.ts"
 import * as Metrics from "./Metrics.ts"
 import type { RunRef, ServiceState, ServiceView } from "./Model.ts"
 import { plan } from "./Plan.ts"
@@ -28,6 +30,7 @@ import { allocatePort } from "./Ports.ts"
 import { Proc, type Spawned } from "./Proc.ts"
 import { pollUntilReady, unlessItExits } from "./Readiness.ts"
 import { Router } from "./Router.ts"
+import { shareableInfra, shareableServices, Sharing } from "./Sharing.ts"
 import {
   hostOf,
   InfraError,
@@ -44,6 +47,10 @@ import {
 } from "./Stack.ts"
 import { Status } from "./Status.ts"
 import { changesUnder } from "./Watch.ts"
+
+export class BaseGone extends Schema.TaggedError<BaseGone>()("BaseGone", {
+  base: Schema.String
+}) {}
 
 export class DependencyFailed extends Schema.TaggedError<DependencyFailed>()("DependencyFailed", {
   service: Schema.String
@@ -125,7 +132,7 @@ const readyLineOf = (service: ServiceNode) =>
 export class Supervisor extends Context.Service<
   Supervisor,
   {
-    readonly run: (stack: Stack, worktree: Worktree) => Effect.Effect<never, unknown, Scope.Scope>
+    readonly run: (stack: Stack, worktree: Worktree, base: Worktree | undefined) => Effect.Effect<never, unknown, Scope.Scope>
     readonly restart: (id: WorktreeId, service: ServiceName) => Effect.Effect<void>
     readonly infraAction: (id: WorktreeId, infra: InfraName, action: string) => Effect.Effect<string, InfraError>
   }
@@ -139,6 +146,8 @@ export class Supervisor extends Context.Service<
       Supervisor,
       Effect.gen(function* () {
         const infra = yield* InfraManager
+        const instances = yield* Instances
+        const sharing = yield* Sharing
         const proc = yield* Proc
         const router = yield* Router
         const status = yield* Status
@@ -224,7 +233,7 @@ export class Supervisor extends Context.Service<
           )
 
         const acquireInfra = Effect.fn("Supervisor.acquireInfra")(
-          function* (worktree: Worktree, spec: InfraSpec) {
+          function* (worktree: Worktree, spec: InfraSpec, tenant: Worktree) {
             yield* Effect.annotateCurrentSpan({
               ...worktreeAttributes(worktree),
               "forkyard.infra": spec.name,
@@ -233,7 +242,7 @@ export class Supervisor extends Context.Service<
             yield* status.infra(worktree.id, spec.name, { _tag: "InfraStarting", scope: spec.scope })
 
             const began = yield* Clock.currentTimeMillis
-            const lease = yield* infra.acquire(spec, worktree)
+            const lease = yield* infra.acquire(spec, tenant)
             yield* hold(worktree, spec, lease.server)
             const url = Object.values(lease.server.urls)[0]
 
@@ -258,17 +267,86 @@ export class Supervisor extends Context.Service<
             )
         )
 
-        const prepare = Effect.fn("Supervisor.prepare")(function* (stack: Stack, worktree: Worktree) {
+        const publishedBy = (owner: Worktree | undefined, names: ReadonlyArray<string>, keyOf: (id: WorktreeId, name: string) => string) =>
+          Effect.forEach(names, (name) =>
+            owner
+              ? instances.get(keyOf(owner.id, name)).pipe(Effect.map((instance) => [name, instance?.fingerprint] as const))
+              : Effect.succeed([name, undefined] as const)
+          ).pipe(
+            Effect.map((entries): Readonly<Record<string, string>> =>
+              Object.fromEntries(entries.flatMap(([name, fingerprint]) => (fingerprint ? [[name, fingerprint] as const] : [])))
+            )
+          )
+
+        const publish = (
+          worktree: Worktree,
+          fingerprints: Readonly<Record<string, string>>,
+          keyOf: (id: WorktreeId, name: string) => string
+        ) =>
+          Effect.forEach(
+            Object.entries(fingerprints),
+            ([name, fingerprint]) => instances.publish(keyOf(worktree.id, name), { fingerprint, port: undefined }),
+            {
+              discard: true
+            }
+          )
+
+        const prepare = Effect.fn("Supervisor.prepare")(function* (stack: Stack, worktree: Worktree, base: Worktree | undefined) {
           yield* Effect.annotateCurrentSpan(worktreeAttributes(worktree))
 
           const nodes = yield* stack.build(worktree)
           yield* plan(nodes)
+          const infraNodes = nodes.filter(isInfra)
+          const services = nodes.filter(isService)
+          const session = stack.inputs ? yield* sharing.session(stack.inputs, worktree) : undefined
 
-          const leases = yield* Effect.forEach(nodes.filter(isInfra), (node) => acquireInfra(worktree, node.spec), {
+          const infraFingerprints = session ? yield* session.infra(infraNodes) : {}
+          const sharedInfra = shareableInfra(
+            infraNodes,
+            infraFingerprints,
+            yield* publishedBy(
+              base,
+              infraNodes.map((node) => node.spec.name),
+              infraKey
+            )
+          )
+          yield* publish(worktree, infraFingerprints, infraKey)
+
+          const tenantFor = (spec: InfraSpec) => (base && sharedInfra.has(spec.name) ? base : worktree)
+          const leases = yield* Effect.forEach(infraNodes, (node) => acquireInfra(worktree, node.spec, tenantFor(node.spec)), {
             concurrency: "unbounded"
           })
+          const infraEnv = Object.fromEntries(leases) as InfraEnv
 
-          return { services: nodes.filter(isService), infraEnv: Object.fromEntries(leases) as InfraEnv }
+          const measured = session
+            ? yield* session.services({
+                services,
+                infra: infraFingerprints,
+                envOf: (service) => resolveEnv(worktree, service, ownedEnvFor(service, infraEnv), undefined)
+              })
+            : { fingerprints: {}, references: {} }
+          const shared = shareableServices({
+            services,
+            infra: sharedInfra,
+            mine: measured.fingerprints,
+            base: yield* publishedBy(
+              base,
+              services.map((service) => service.name),
+              instanceKey
+            ),
+            references: measured.references
+          })
+          yield* publish(
+            worktree,
+            Object.fromEntries(Object.entries(measured.fingerprints).filter(([name]) => !shared.has(name))),
+            instanceKey
+          )
+          if (base)
+            yield* Effect.logInfo(
+              `${worktree.id} shares ${shared.size} of ${services.length} services and ${sharedInfra.size} infra with ${base.id}`
+            )
+
+          return { services, infraEnv, shared }
         })
 
         const readinessOf = (services: ReadonlyArray<ServiceNode>) =>
@@ -325,6 +403,7 @@ export class Supervisor extends Context.Service<
           yield* setState(worktree, service, { _tag: "Preparing" })
 
           const port = service.exposure._tag === "Routed" ? yield* allocatePort : undefined
+          yield* instances.setPort(instanceKey(worktree.id, service.name), port)
           const extraPorts = yield* allocateNamedPorts(service)
           const spawned = yield* spawnProcess(worktree, service, yield* resolveEnv(worktree, service, { ...ownedEnv, ...extraPorts }, port))
           yield* Effect.annotateCurrentSpan({ "forkyard.run": spawned.run.run, "process.pid": spawned.pid })
@@ -489,17 +568,71 @@ export class Supervisor extends Context.Service<
             )
         )
 
-        const run = Effect.fnUntraced(function* (stack: Stack, worktree: Worktree): Effect.fn.Return<never, unknown, Scope.Scope> {
-          const { services, infraEnv } = yield* prepare(stack, worktree)
-          const readiness = yield* readinessOf(services)
+        const mirror = (worktree: Worktree, service: ServiceNode, ready: Ready) => (state: ServiceState) => {
+          const apply = setState(worktree, service, state)
+          if (state._tag === "Ready" || state._tag === "Done") return apply.pipe(Effect.andThen(Deferred.succeed(ready, undefined)))
+          if (state._tag === "Failed")
+            return apply.pipe(Effect.andThen(Deferred.fail(ready, new DependencyFailed({ service: service.name }))))
+          return apply
+        }
 
-          yield* Effect.addFinalizer(() => env.forget(worktree.id))
-          yield* Effect.forEach(services, (service) => supervise(worktree, service, infraEnv, readiness), {
-            concurrency: "unbounded",
+        const followState = (worktree: Worktree, service: ServiceNode, base: Worktree, ready: Ready) =>
+          status.changes.pipe(
+            Stream.map((snapshot) => snapshot[base.id]?.services[service.name]?.state),
+            Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
+            Stream.runForEach((state) => (state ? mirror(worktree, service, ready)(state) : Effect.fail(new BaseGone({ base: base.id }))))
+          )
+
+        const routeTo = (worktree: Worktree, service: ServiceNode, port: Port) =>
+          Stream.scoped(Stream.fromEffect(router.expose({ host: hostOf(worktree, service.name), port })).pipe(Stream.concat(Stream.never)))
+
+        const followRoute = (worktree: Worktree, service: ServiceNode, base: Worktree) => {
+          if (service.exposure._tag !== "Routed") return Effect.never
+          return instances.watch(instanceKey(base.id, service.name)).pipe(
+            Stream.switchMap((instance) => {
+              if (!instance) return Stream.fail(new BaseGone({ base: base.id }))
+              return instance.port ? routeTo(worktree, service, instance.port) : Stream.empty
+            }),
+            Stream.runDrain
+          )
+        }
+
+        const superviseShared = Effect.fnUntraced(function* (
+          worktree: Worktree,
+          service: ServiceNode,
+          base: Worktree,
+          readiness: Readiness
+        ) {
+          yield* status.service(worktree.id, service.name, { ...viewOf(worktree, service, { _tag: "Waiting" }), sharedWith: base.id })
+          yield* Effect.all([followState(worktree, service, base, readiness[service.name]!), followRoute(worktree, service, base)], {
+            concurrency: 2,
             discard: true
           })
+        })
 
-          return yield* Effect.never
+        const run = Effect.fnUntraced(function* (
+          stack: Stack,
+          worktree: Worktree,
+          base: Worktree | undefined
+        ): Effect.fn.Return<never, unknown, Scope.Scope> {
+          const { services, infraEnv, shared } = yield* prepare(stack, worktree, base)
+          const readiness = yield* readinessOf(services)
+          const baseLost = yield* Deferred.make<void>()
+          const loseBase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            effect.pipe(Effect.catch((error) => (error instanceof BaseGone ? Deferred.succeed(baseLost, undefined) : Effect.fail(error))))
+
+          yield* Effect.addFinalizer(() => env.forget(worktree.id))
+          yield* Effect.forEach(
+            services,
+            (service) =>
+              base && shared.has(service.name)
+                ? superviseShared(worktree, service, base, readiness).pipe(loseBase, Effect.forkScoped)
+                : supervise(worktree, service, infraEnv, readiness).pipe(Effect.forkScoped),
+            { discard: true }
+          )
+
+          yield* Deferred.await(baseLost)
+          return yield* new BaseGone({ base: base?.id ?? "" })
         })
 
         return Supervisor.of({

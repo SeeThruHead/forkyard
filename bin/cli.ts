@@ -73,7 +73,8 @@ const describe = (worktree: WorktreeView) => {
       `  ${name.padEnd(14)} ${view._tag.replace("Infra", "").toLowerCase().padEnd(10)} ${"url" in view ? (view.url ?? "") : ""}`
   )
   const services = Object.entries(worktree.services).map(
-    ([name, view]) => `  ${name.padEnd(14)} ${stateLabel(view.state).padEnd(10)} ${serviceUrl(view) ?? stateDetail(view.state) ?? ""}`
+    ([name, view]) =>
+      `  ${name.padEnd(14)} ${stateLabel(view.state).padEnd(10)} ${serviceUrl(view) ?? stateDetail(view.state) ?? ""}${view.sharedWith ? `  (shared with ${view.sharedWith})` : ""}`
   )
 
   return [...infra, ...services].join("\n")
