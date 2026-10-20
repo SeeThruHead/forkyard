@@ -51,7 +51,7 @@ export const moon =
   (options: MoonOptions): InputsHook =>
   (target, context) =>
     Effect.gen(function* () {
-      const always = options.always ?? []
+      const always = target.kind === "service" ? (options.always ?? []) : []
       const explicit = options.paths?.[target.name]
       if (explicit) return { paths: [...explicit, ...always] }
 
