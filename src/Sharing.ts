@@ -9,13 +9,28 @@ const forkyardKeys = ["PATH", "PORT", "FORKYARD_WORKTREE", "FORKYARD_BRANCH", "F
 
 const hostPattern = (host: string) => new RegExp(`(?<![a-z0-9-])${host.replaceAll(".", "\\.")}`)
 
-export const referencesOf = (env: Readonly<Record<string, string>>, worktree: Worktree, names: ReadonlyArray<string>) => {
-  const values = Object.values(env)
-  return names.filter((name) => {
+export type Reference = { readonly key: string; readonly service: string }
+
+export const referencesIn = (
+  env: Readonly<Record<string, string>>,
+  worktree: Worktree,
+  names: ReadonlyArray<string>
+): ReadonlyArray<Reference> =>
+  names.flatMap((name) => {
     const pattern = hostPattern(hostOf(worktree, name))
-    return values.some((value) => pattern.test(value))
+    return Object.entries(env)
+      .filter(([, value]) => pattern.test(value))
+      .map(([key]) => ({ key, service: name }))
   })
-}
+
+export const referencesOf = (env: Readonly<Record<string, string>>, worktree: Worktree, names: ReadonlyArray<string>) => [
+  ...new Set(referencesIn(env, worktree, names).map((reference) => reference.service))
+]
+
+export const undeclared = (service: ServiceNode, references: ReadonlyArray<Reference>) =>
+  references.filter(
+    (reference) => !service.links.includes(reference.key) && !service.calls.includes(reference.service as ServiceNode["name"])
+  )
 
 type Fingerprints = Readonly<Record<string, string>>
 
@@ -56,7 +71,10 @@ const serviceFingerprint = (
   return combine(hash, runText(service.run), service.cwd, service.lifecycle._tag, envHash(normalized, domains, ignored), ...usedInfra)
 }
 
-export type ServiceFingerprints = Readonly<Record<string, string>>
+export type ServiceFingerprints = {
+  readonly fingerprints: Readonly<Record<string, string>>
+  readonly unexplained: ReadonlyArray<string>
+}
 
 export type Session = {
   readonly infra: (infra: ReadonlyArray<InfraNode>) => Effect.Effect<Readonly<Record<string, string>>, InputsError>
@@ -124,17 +142,29 @@ export class Sharing extends Context.Service<
                 : [[service.name, serviceFingerprint(worktree, [worktree.domain], service, hash, env, options.infra)] as const]
             )
           )
-          const references = Object.fromEntries(
+          const found = Object.fromEntries(
             resolved.map(({ service, env }) => [
               service.name,
-              referencesOf(
-                env,
-                worktree,
-                names.filter((name) => name !== service.name)
+              undeclared(
+                service,
+                referencesIn(
+                  env,
+                  worktree,
+                  names.filter((name) => name !== service.name)
+                )
               )
             ])
           )
-          return withCalls(fingerprints, references) satisfies ServiceFingerprints
+          const references = Object.fromEntries(
+            options.services.map((service) => [
+              service.name,
+              [...new Set([...service.calls, ...(found[service.name] ?? []).map((reference) => reference.service)])]
+            ])
+          )
+          const unexplained = Object.entries(found).flatMap(([name, list]) =>
+            list.map((reference) => `${name}.${reference.key} -> ${reference.service}`)
+          )
+          return { fingerprints: withCalls(fingerprints, references), unexplained } satisfies ServiceFingerprints
         })
 
         return { infra, services } satisfies Session

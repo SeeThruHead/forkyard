@@ -15,13 +15,18 @@ export type Plan = {
   readonly mermaid: string
 }
 
+const calls = (node: Node): ReadonlyArray<string> => (node._tag === "Service" ? node.calls : [])
+
 const unknownDependencies = (nodes: ReadonlyArray<Node>) => {
   const names = nodes.map(nodeName)
-  return nodes.flatMap((node) =>
-    dependencies(node)
+  return nodes.flatMap((node) => [
+    ...dependencies(node)
       .filter((dep) => !names.includes(dep))
-      .map((dep) => `${nodeName(node)} needs ${dep}`)
-  )
+      .map((dep) => `${nodeName(node)} needs ${dep}`),
+    ...calls(node)
+      .filter((callee) => !names.includes(callee))
+      .map((callee) => `${nodeName(node)} calls ${callee}`)
+  ])
 }
 
 const dependencyGraph = (nodes: ReadonlyArray<Node>) =>

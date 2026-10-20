@@ -114,7 +114,9 @@ export type ServiceNode = {
   readonly envFrom: ReadonlyArray<EnvSource>
   readonly uses: ReadonlyArray<InfraName>
   readonly after: ReadonlyArray<ServiceName>
+  readonly calls: ReadonlyArray<ServiceName>
   readonly ports: ReadonlyArray<string>
+  readonly links: ReadonlyArray<string>
   readonly stopTimeout?: Duration.Input
   readonly exposure: Exposure
   readonly lifecycle: Lifecycle
@@ -153,7 +155,9 @@ type CommonProps = {
   readonly envFrom?: ReadonlyArray<EnvSource>
   readonly uses?: ReadonlyArray<InfraRef>
   readonly after?: ReadonlyArray<ServiceRef>
+  readonly calls?: ReadonlyArray<ServiceRef>
   readonly ports?: ReadonlyArray<string>
+  readonly links?: ReadonlyArray<string>
   readonly stopTimeout?: Duration.Input
 }
 
@@ -231,7 +235,9 @@ const declare = Effect.fn("Service.process")(function* (rawName: string, props: 
     envFrom: props.envFrom ?? [],
     uses: (props.uses ?? []).map((ref) => ref.infra),
     after: (props.after ?? []).map((ref) => ref.service),
+    calls: (props.calls ?? []).map((ref) => ref.service),
     ports: props.ports ?? [],
+    links: props.links ?? [],
     ...(props.stopTimeout ? { stopTimeout: props.stopTimeout } : {}),
     ...shape
   })

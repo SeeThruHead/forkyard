@@ -322,13 +322,18 @@ export class Supervisor extends Context.Service<
           )
           const infraEnv = Object.fromEntries(leases) as InfraEnv
 
-          const fingerprints = session
+          const measured = session
             ? yield* session.services({
                 services,
                 infra: infraFingerprints,
                 envOf: (service) => resolveEnv(worktree, service, ownedEnvFor(service, infraEnv), undefined)
               })
-            : {}
+            : { fingerprints: {}, unexplained: [] }
+          if (measured.unexplained.length > 0)
+            yield* Effect.logWarning(
+              `${worktree.id}: env points at other services without saying whether it calls them, so they count as calls. Add each to that service's calls or links: ${measured.unexplained.join(", ")}`
+            )
+          const fingerprints = measured.fingerprints
           const lenders = yield* decisions.withPermits(1)(claim(worktree, services, fingerprints))
           if (session) yield* Effect.logInfo(describeSharing(worktree, services, lenders))
 
@@ -602,13 +607,26 @@ export class Supervisor extends Context.Service<
           const { services, infraEnv, lenders, fingerprints } = yield* prepare(stack, worktree)
           const readiness = yield* readinessOf(services)
           const own = (service: ServiceNode) => supervise(worktree, service, infraEnv, readiness)
-          const takeOver = (service: ServiceNode) =>
-            Effect.logInfo(`${worktree.id}/${service.name} lost the instance it shared; starting its own`).pipe(
-              Effect.andThen(publishOwn(worktree, service.name, fingerprints[service.name])),
-              Effect.andThen(own(service))
+          const reclaim = (service: ServiceNode) => {
+            const fingerprint = fingerprints[service.name]
+            const find = fingerprint ? instances.find(fingerprint, worktree.id) : Effect.succeed(undefined)
+            return decisions.withPermits(1)(
+              find.pipe(Effect.tap((found) => (found ? Effect.void : publishOwn(worktree, service.name, fingerprint))))
             )
-          const shareOrOwn = (service: ServiceNode) => {
-            const found = lenders[service.name]
+          }
+          const takeOver = (service: ServiceNode): Effect.Effect<void, unknown, Scope.Scope> =>
+            reclaim(service).pipe(
+              Effect.flatMap((found) =>
+                found
+                  ? Effect.logInfo(
+                      `${worktree.id}/${service.name} lost the instance it shared; now using the one under ${found.instance.owner}`
+                    ).pipe(Effect.andThen(shareOrOwn(service, found)))
+                  : Effect.logInfo(`${worktree.id}/${service.name} lost the instance it shared; starting its own`).pipe(
+                      Effect.andThen(own(service))
+                    )
+              )
+            )
+          const shareOrOwn = (service: ServiceNode, found: Found | undefined): Effect.Effect<void, unknown, Scope.Scope> => {
             if (!found) return own(service)
             return borrow(worktree, service, found, readiness).pipe(
               Effect.catch((error) => (error instanceof LenderGone ? takeOver(service) : Effect.fail(error)))
@@ -616,7 +634,9 @@ export class Supervisor extends Context.Service<
           }
 
           yield* Effect.addFinalizer(() => env.forget(worktree.id))
-          yield* Effect.forEach(services, (service) => shareOrOwn(service).pipe(Effect.forkScoped), { discard: true })
+          yield* Effect.forEach(services, (service) => shareOrOwn(service, lenders[service.name]).pipe(Effect.forkScoped), {
+            discard: true
+          })
 
           return yield* Effect.never
         })
