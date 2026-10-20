@@ -9,6 +9,7 @@ type Shape = {
   readonly uses?: ReadonlyArray<string>
   readonly consumes?: ReadonlyArray<string>
   readonly task?: boolean
+  readonly prepares?: ReadonlyArray<string>
 }
 
 const node = (name: string, shape: Shape = {}): ServiceNode => ({
@@ -20,6 +21,7 @@ const node = (name: string, shape: Shape = {}): ServiceNode => ({
   envFrom: [],
   uses: ["telemetry", ...(shape.uses ?? []), ...(shape.consumes ?? [])].map((infra) => InfraName.make(infra)),
   consumes: (shape.consumes ?? []).map((infra) => InfraName.make(infra)),
+  prepares: (shape.prepares ?? []).map((infra) => InfraName.make(infra)),
   after: (shape.after ?? []).map((dependency) => ServiceName.make(dependency)),
   calls: (shape.calls ?? []).map((callee) => ServiceName.make(callee)),
   ports: [],
@@ -31,8 +33,8 @@ const node = (name: string, shape: Shape = {}): ServiceNode => ({
 
 const shop = [
   node("install", { task: true }),
-  node("migrate", { task: true, after: ["install"], uses: ["postgres"] }),
-  node("codegen", { task: true, after: ["install", "graph"] }),
+  node("migrate", { task: true, after: ["install"], uses: ["postgres"], prepares: ["postgres"] }),
+  node("codegen", { task: true, after: ["install", "graph"], uses: ["postgres"] }),
   node("api", { after: ["install", "migrate"], uses: ["postgres", "nats"] }),
   node("graph", { after: ["install", "migrate"], uses: ["postgres"], calls: ["api"] }),
   node("admin", { after: ["install", "api", "graph", "codegen"], calls: ["api", "graph"] }),
@@ -74,13 +76,17 @@ describe("placement", () => {
     expect(place("handlers")).not.toContain("postgres")
   })
 
-  it("tasks that touch shared infra stay shared, even when something here needs them", () => {
+  it("a task that sets up shared infra stays shared, even when something here needs it", () => {
     expect(place("api")).not.toContain("migrate")
+  })
+
+  it("a task that only reads shared infra runs here when something here needs it, with the tasks it waits on", () => {
+    expect(place("admin")).toEqual(["admin", "codegen", "install"])
   })
 
   it("infra every worktree uses as-is, like telemetry, never decides where something runs", () => {
     expect(place("telemetry")).toEqual([])
-    expect([...localNames(shop, new Set(["admin"]))]).not.toContain("install")
+    expect([...localNames(shop, new Set(["telemetry"]))]).toContain("api")
   })
 
   it("starting a service starts what it waits on, and nothing else", () => {
