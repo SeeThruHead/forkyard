@@ -600,14 +600,12 @@ export class Supervisor extends Context.Service<
           )
         }, Effect.scoped)
 
-        const holdWhileDown = (worktree: Worktree, service: ServiceNode, wakes: boolean) => {
-          if (!wakes) return Effect.void
+        const holdWhileDown = (worktree: Worktree, service: ServiceNode) => {
           if (service.exposure._tag !== "Routed") return Effect.void
           return waker.holdWhileDown(hostOf(worktree, service.name))
         }
 
-        const wakeOnRequest = (worktree: Worktree, service: ServiceNode, wakes: boolean) => {
-          if (!wakes) return Effect.void
+        const wakeOnRequest = (worktree: Worktree, service: ServiceNode) => {
           if (service.exposure._tag !== "Routed") return Effect.void
           return waker.sleepUntilRequested(hostOf(worktree, service.name), pins.pin(worktree.id, service.name, "start"))
         }
@@ -649,10 +647,10 @@ export class Supervisor extends Context.Service<
           return check.pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.forkScoped)
         }
 
-        const asleep = (worktree: Worktree, service: ServiceNode, wakes: boolean) =>
+        const asleep = (worktree: Worktree, service: ServiceNode) =>
           status
             .service(worktree.id, service.name, { ...viewOf(worktree, service, { _tag: "Waiting" }), asleep: true })
-            .pipe(Effect.andThen(wakeOnRequest(worktree, service, wakes)), Effect.andThen(Effect.never), Effect.scoped)
+            .pipe(Effect.andThen(wakeOnRequest(worktree, service)), Effect.andThen(Effect.never), Effect.scoped)
 
         const gitIn = (id: WorktreeId, root: string, ...args: ReadonlyArray<string>) =>
           changes.exec(id, root, git(...args)).pipe(
@@ -837,7 +835,7 @@ export class Supervisor extends Context.Service<
             )
 
           const runAs = (service: ServiceNode) => (placement: Placement) => {
-            if (placement === "asleep") return asleep(worktree, service, shared !== undefined)
+            if (placement === "asleep") return asleep(worktree, service)
             if (placement === "shared" && shared) return useShared(worktree, service, shared, readiness).pipe(Effect.andThen(Effect.never))
             return Effect.gen(function* () {
               yield* supervise(worktree, service, envOf(service), readiness, yield* infraMoved(service))
@@ -853,7 +851,7 @@ export class Supervisor extends Context.Service<
           yield* Effect.forEach(
             services,
             (service) =>
-              holdWhileDown(worktree, service, shared !== undefined).pipe(
+              holdWhileDown(worktree, service).pipe(
                 Effect.andThen(
                   placementOf(service).pipe(
                     Stream.switchMap((placement) => Stream.fromEffect(runAs(service)(placement))),

@@ -39,9 +39,9 @@ const sharedInfra = (worktrees: ReadonlyArray<WorktreeView>) => {
   })
 }
 
-const repoTone = (failed: number, settled: number, total: number) => {
+const repoTone = (failed: number, busy: number) => {
   if (failed > 0) return "c-Failed"
-  if (settled < total) return "c-Starting"
+  if (busy > 0) return "c-Starting"
   return "c-Ready"
 }
 
@@ -178,6 +178,7 @@ const Repo = ({
   const total = all.reduce((sum, item) => sum + item.total, 0)
   const settled = all.reduce((sum, item) => sum + item.settled, 0)
   const failed = all.reduce((sum, item) => sum + item.failed, 0)
+  const busy = all.reduce((sum, item) => sum + item.busy, 0)
   const resources = usageOfPids(usage, distinctPids(worktrees))
 
   return (
@@ -190,7 +191,7 @@ const Repo = ({
         <span className="dim">
           {worktrees.length} {worktrees.length === 1 ? "branch" : "branches"}
         </span>
-        <span className={`stat ${repoTone(failed, settled, total)}`}>
+        <span className={`stat ${repoTone(failed, busy)}`}>
           {settled}/{total}
           {failed > 0 ? ` · ${failed} failed` : ""}
         </span>
