@@ -6,7 +6,7 @@ import { osName } from "../src/platform/Os.ts"
 import { runtimeFlags } from "../src/platform/Runtime.ts"
 
 const label = "dev.forkyard.daemon"
-const trayCask = "forkyard-bar"
+const trayFormula = "forkyard-bar"
 
 const launchdTarget = () => `gui/${process.getuid?.() ?? 0}`
 
@@ -186,9 +186,9 @@ const upgradePackage = (method: InstallMethod) => {
 }
 
 const upgradeTray = Effect.gen(function* () {
-  if ((yield* quietly("brew", "list", "--cask", trayCask)) !== 0) return
-  yield* Console.log(`updating the ${trayCask} menu bar app`)
-  yield* run("brew", "upgrade", "--cask", trayCask)
+  if ((yield* quietly("brew", "list", "--formula", trayFormula)) !== 0) return
+  yield* Console.log(`updating the ${trayFormula} menu bar app`)
+  yield* run("brew", "upgrade", trayFormula)
 })
 
 export const update = Effect.gen(function* () {
