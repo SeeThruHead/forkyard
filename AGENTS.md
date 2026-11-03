@@ -33,7 +33,7 @@ The daemon keeps its own state in one SQLite file in its home directory. `src/Da
 
 ## What the linter enforces
 
-`pnpm run lint` runs oxlint with the project rules in `lint/forkyard.js`:
+`pnpm run lint` runs oxlint type-aware, with the Effect language service's rules (the `effecttsgo` plugin from `@effect/tsgo`, patched into oxlint by `pnpm run patch` on install; each rule's quick fix is in the editor through the `@effect/language-service` tsconfig plugin) and the project rules in `lint/forkyard.js`:
 
 - `scoped-processes` (error): only `src/Proc.ts` and the platform layer (`src/platform/Os.ts`) may start processes (`node:child_process`, `effect/process`, `NodeServices`), only the platform layer may call `process.kill` (the Registry's reaper goes through it), and `Effect.run*` is not called inside the daemon: effects are composed and run once at the entry point.
 - `no-gen-wrapper` (warning): a named function that only returns `Effect.gen` is usually better as `Effect.fn` (named and traced) or `Effect.fnUntraced`.

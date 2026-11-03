@@ -38,12 +38,13 @@
     "build:dashboard": "bun build dashboard/src/main.tsx --outdir dashboard/dist --target browser --minify && cp dashboard/index.html dashboard/dist/index.html",
     "tour": "node --conditions=forkyard-source --no-warnings harness/tour.ts",
     "golden-demo": "node --conditions=forkyard-source --no-warnings harness/golden-demo.ts",
-    "lint": "oxlint",
+    "lint": "oxlint --type-aware --deny-warnings",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test",
     "lint:fixtures": "oxlint -c test/lint/fixtures.oxlintrc.json test/lint/fixtures",
-    "prepare": "lefthook install",
+    "prepare": "pnpm run patch && lefthook install",
+    "patch": "effect-tsgo patch --oxlint",
     "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc -p tsconfig.types.json && pnpm run build:dashboard",
     "prepack": "pnpm run build",
     "test:container": "harness/container/run.sh"
@@ -59,6 +60,7 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@effect/tsgo": "0.64.1",
     "@effect/vitest": "4.1.2",
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
@@ -66,10 +68,11 @@
     "effect": "4.1.2",
     "lefthook": "2.2.2",
     "oxfmt": "0.73.0",
-    "oxlint": "1.88.0",
+    "oxlint": "1.90.0",
+    "oxlint-tsgolint": "7.0.2005",
     "rust-just": "1.59.0",
     "tsx": "^4.23.15",
-    "typescript": "^5.9.0",
+    "typescript": "7.0.2",
     "vitest": "^5.0.5"
   },
   "peerDependencies": {

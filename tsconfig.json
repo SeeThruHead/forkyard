@@ -15,6 +15,7 @@
     "noEmit": true,
     "types": ["node"],
     "customConditions": ["forkyard-source"],
+    "plugins": [{ "name": "@effect/language-service", "namespaceImportPackages": ["effect", "@effect/*"], "diagnostics": false }],
     "paths": {
       "forkyard": ["./src/index.ts"],
       "forkyard/client": ["./src/Client.ts"],
