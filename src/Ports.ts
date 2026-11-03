@@ -2,7 +2,7 @@ import { Effect, Predicate, Schema } from "effect"
 import { connect, createServer } from "node:net"
 import { Port } from "./Ids.ts"
 
-export class PortError extends Schema.TaggedError<PortError>()("PortError", {
+export class PortError extends Schema.TaggedError<PortError, { readonly brand: unique symbol }>()("PortError", {
   message: Schema.String
 }) {}
 

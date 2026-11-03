@@ -38,7 +38,7 @@ const closure = (graph: Graph, ids: ReadonlyArray<string>, seen: ReadonlySet<str
 
 const graphOf = Effect.fnUntraced(function* (context: InputsContext) {
   const json = yield* context.exec({ command: "moon", args: ["query", "projects"] })
-  const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Projects))(json).pipe(
+  const decoded = yield* Schema.decodeEffect(Schema.fromJsonString(Projects))(json).pipe(
     Effect.mapError((error) => new InputsError({ message: `moon query projects: ${error.message}` }))
   )
   return Object.fromEntries(decoded.projects.map((project) => [project.id, project])) as Graph

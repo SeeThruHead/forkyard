@@ -3,6 +3,12 @@ type Order = { readonly id: number; readonly sku: string; readonly status: strin
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!
 const json = (url: string, init?: RequestInit) => fetch(url, init).then((response) => response.json())
+
+const textField = (form: HTMLFormElement, name: string) => {
+  const value = new FormData(form).get(name)
+  return typeof value === "string" ? value : ""
+}
+
 const api = String(process.env.REACT_APP_API_URL)
 const graph = String(process.env.GRAPH_URL)
 const billing = String(process.env.BILLING_API_URL)
@@ -22,7 +28,7 @@ if (code) {
 }
 $("#user").textContent = localStorage.getItem("user") ? `signed in as ${localStorage.getItem("user")}` : "not signed in"
 
-const flags = await json(`${process.env.FLAGS_BASE_URL}/flags`)
+const flags: Readonly<Record<string, boolean>> = await json(`${process.env.FLAGS_BASE_URL}/flags`)
 $("#flags").textContent = `flags: ${Object.entries(flags)
   .map(([key, on]) => `${key}=${on}`)
   .join(", ")}`
@@ -47,7 +53,7 @@ const refresh = async () => {
 
 $<HTMLFormElement>("#order").addEventListener("submit", async (event) => {
   event.preventDefault()
-  const sku = String(new FormData(event.target as HTMLFormElement).get("sku"))
+  const sku = textField(event.target as HTMLFormElement, "sku")
   await json(`${api}/orders`, {
     method: "POST",
     headers: { "content-type": "application/json" },

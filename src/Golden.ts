@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema, Semaphore, TxReentrantLock } from "effect"
 import { SqlClient } from "effect/sql"
 
-export class GoldenError extends Schema.TaggedError<GoldenError>()("GoldenError", {
+export class GoldenError extends Schema.TaggedError<GoldenError, { readonly brand: unique symbol }>()("GoldenError", {
   step: Schema.String,
   cause: Schema.Defect()
 }) {}

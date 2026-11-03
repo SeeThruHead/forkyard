@@ -1,4 +1,4 @@
-import { Context, Effect, FileSystem, Layer, Path, Record, type Scope, Stream, SubscriptionRef } from "effect"
+import { Context, Effect, FileSystem, Layer, Path, Record, Schema, type Scope, Stream, SubscriptionRef } from "effect"
 import type { Port } from "./Ids.ts"
 
 export type Route = { readonly host: string; readonly port: Port; readonly upstream?: string; readonly builtIn?: string }
@@ -23,6 +23,8 @@ export const traefikConfig = (routes: Readonly<Record<string, Route>>, upstreamH
     }
   }
 }
+
+const encodeConfig = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 const hostsBegin = "# forkyard begin: names for running worktrees, managed by forkyard"
 const hostsEnd = "# forkyard end"
@@ -66,7 +68,8 @@ export class Router extends Context.Service<
           function* (routes: Readonly<Record<string, Route>>) {
             const temp = `${options.file}.tmp`
             yield* fs.makeDirectory(path.dirname(options.file), { recursive: true })
-            yield* fs.writeFileString(temp, JSON.stringify(traefikConfig(routes, options.upstreamHost), null, 2))
+            const config = yield* encodeConfig(traefikConfig(routes, options.upstreamHost)).pipe(Effect.orDie)
+            yield* fs.writeFileString(temp, config)
             yield* fs.rename(temp, options.file)
             if (options.hostsFile) yield* writeHosts(options.hostsFile, Object.keys(routes))
             yield* Effect.annotateCurrentSpan({ "forkyard.routes": Object.keys(routes).length })

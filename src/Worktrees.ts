@@ -1,10 +1,11 @@
-import { Cause, Clock, Context, Effect, Exit, FiberMap, Latch, Layer, Metric, Option, Schema } from "effect"
+import { Cause, Clock, Context, Effect, Exit, FiberMap, Latch, Layer, Metric, Schema } from "effect"
 import { type AbsolutePath, branchSlug, type WorktreeId, worktreeId } from "./Ids.ts"
 import { ProxyAddress } from "./ProxyAddress.ts"
 import * as Metrics from "./Metrics.ts"
 import { ForkyardError } from "./Protocol.ts"
 import { type DesiredWorktree, Registry } from "./Registry.ts"
-import type { Stack, Worktree } from "./Stack.ts"
+import type { PlanError } from "./Plan.ts"
+import type { ConfigError, InfraError, Stack, Worktree } from "./Stack.ts"
 import { Status } from "./Status.ts"
 import { Supervisor } from "./Supervisor.ts"
 
@@ -58,19 +59,19 @@ export class Worktrees extends Context.Service<
         const supervisor = yield* Supervisor
         const status = yield* Status
         const registry = yield* Registry
-        const running = yield* FiberMap.make<WorktreeId>()
+        const running = yield* FiberMap.make<WorktreeId, never, ConfigError | PlanError | InfraError>()
         const booted = yield* Latch.make(false)
 
         const recordRunning = FiberMap.size(running).pipe(Effect.flatMap((count) => Metric.update(Metrics.worktreesRunning, count)))
 
         const baseName = (request: UpRequest) =>
-          Option.match(branchSlug(request.branch), {
-            onNone: () => Effect.fail(new ForkyardError({ message: `"${request.branch}" cannot be used as a name` })),
-            onSome: Effect.succeed
-          })
+          Effect.fromOption(branchSlug(request.branch)).pipe(
+            Effect.mapError(() => new ForkyardError({ message: `"${request.branch}" cannot be used as a name` }))
+          )
 
         const worktreeFor = Effect.fn("Worktrees.worktreeFor")(function* (stack: Stack, request: UpRequest) {
-          const name = yield* registry.nameFor(request.root, stack.name, yield* baseName(request))
+          const base = yield* baseName(request)
+          const name = yield* registry.nameFor(request.root, stack.name, base)
           const id = worktreeId(name, stack.name)
           yield* Effect.annotateCurrentSpan({ "forkyard.worktree": id })
           return {
@@ -92,10 +93,12 @@ export class Worktrees extends Context.Service<
           stack_file: request.stackFile
         })
 
-        const clearUnlessFailed = (id: WorktreeId) => (exit: Exit.Exit<unknown, unknown>) => {
-          if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) return Effect.void
-          return status.clear(id)
-        }
+        const clearUnlessFailed =
+          (id: WorktreeId) =>
+          <A, E>(exit: Exit.Exit<A, E>) => {
+            if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) return Effect.void
+            return status.clear(id)
+          }
 
         const launch = (stack: Stack, worktree: Worktree) =>
           FiberMap.run(running, worktree.id, { onlyIfMissing: true })(
@@ -116,7 +119,8 @@ export class Worktrees extends Context.Service<
         })
 
         const stopOtherNamesFor = Effect.fn("Worktrees.stopOtherNamesFor")(function* (worktree: Worktree) {
-          const others = Object.values(yield* status.snapshot).filter((other) => other.root === worktree.root && other.id !== worktree.id)
+          const snapshot = yield* status.snapshot
+          const others = Object.values(snapshot).filter((other) => other.root === worktree.root && other.id !== worktree.id)
           yield* Effect.forEach(others, (other) => FiberMap.remove(running, other.id), { discard: true })
         })
 

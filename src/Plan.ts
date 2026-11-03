@@ -1,7 +1,7 @@
 import { Array, Effect, Graph, Option, Schema } from "effect"
 import type { Node } from "./Stack.ts"
 
-export class PlanError extends Schema.TaggedError<PlanError>()("PlanError", {
+export class PlanError extends Schema.TaggedError<PlanError, { readonly brand: unique symbol }>()("PlanError", {
   message: Schema.String
 }) {}
 

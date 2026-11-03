@@ -10,13 +10,13 @@ const RunRow = Schema.Struct({
   n: RunNumber,
   pid: Pid,
   command: Schema.String,
-  started_at: Schema.Number,
-  ended_at: Schema.NullOr(Schema.Number),
+  started_at: Schema.Finite,
+  ended_at: Schema.NullOr(Schema.Finite),
   exit_code: Schema.NullOr(Schema.Int)
 })
 type RunRow = typeof RunRow.Type
 
-const LineRow = Schema.Struct({ run_id: RunId, seq: Schema.Int, at: Schema.Number, line: Schema.String })
+const LineRow = Schema.Struct({ run_id: RunId, seq: Schema.Int, at: Schema.Finite, line: Schema.String })
 
 const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(RunRow))
 const decodeLines = Schema.decodeUnknownEffect(Schema.Array(LineRow))

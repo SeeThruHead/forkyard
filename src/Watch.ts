@@ -50,5 +50,5 @@ export const changesUnder = Effect.fn("Watch.changesUnder")(function* (root: str
     Effect.forkScoped
   )
 
-  return Queue.take(pending)
-})
+  return pending
+}, Effect.map(Queue.take))

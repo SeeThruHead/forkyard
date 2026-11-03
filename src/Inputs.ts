@@ -1,7 +1,7 @@
 import { Effect, Schema, type Scope } from "effect"
 import type { Run } from "./Stack.ts"
 
-export class InputsError extends Schema.TaggedError<InputsError>()("InputsError", {
+export class InputsError extends Schema.TaggedError<InputsError, { readonly brand: unique symbol }>()("InputsError", {
   message: Schema.String
 }) {}
 

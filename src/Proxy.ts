@@ -21,7 +21,9 @@ const traefikArgs = (port: number, dynamicDir: string) => [
 
 const preferredPorts = [80, 8080].map((port) => Port.make(port))
 
-export class ProxyPortTaken extends Schema.TaggedError<ProxyPortTaken>()("ProxyPortTaken", { message: Schema.String }) {}
+export class ProxyPortTaken extends Schema.TaggedError<ProxyPortTaken, { readonly brand: unique symbol }>()("ProxyPortTaken", {
+  message: Schema.String
+}) {}
 
 const reportExit = (proxy: InfraProcess) =>
   proxy.exited.pipe(
@@ -69,7 +71,8 @@ export const layer = (options: Options) =>
       const path = yield* Path.Path
       const tools = toolsFor(proc, "forkyard")
       const container = (port: Port) => forkyardName("traefik", port)
-      const removeOwnProxy = (port: Port) => (options.mode === "docker" ? removeContainer(tools, container(port)) : Effect.void)
+      const removeOwnProxy = (port: Port) =>
+        options.mode === "docker" ? container(port).pipe(Effect.flatMap((name) => removeContainer(tools, name))) : Effect.void
       const isFree = (port: Port) =>
         removeOwnProxy(port).pipe(
           Effect.andThen(takenOnLoopback(port)),
@@ -83,17 +86,21 @@ export const layer = (options: Options) =>
       yield* router.expose({ host: metricsHost, port, builtIn: "prometheus@internal" })
       const proxy = yield* options.mode === "binary"
         ? tools.spawn({ name: "traefik", run: cmd("traefik", ...traefikArgs(port, path.resolve(options.traefikDir))), env: {} })
-        : dockerContainer(tools, {
-            infra: "traefik",
-            name: container(port),
-            args: [
-              ...networking.args,
-              "-v",
-              `${path.resolve(options.traefikDir)}:/etc/traefik/dynamic`,
-              "traefik:v3",
-              ...traefikArgs(networking.listenPort(port), "/etc/traefik/dynamic")
-            ]
-          })
+        : container(port).pipe(
+            Effect.flatMap((name) =>
+              dockerContainer(tools, {
+                infra: "traefik",
+                name,
+                args: [
+                  ...networking.args,
+                  "-v",
+                  `${path.resolve(options.traefikDir)}:/etc/traefik/dynamic`,
+                  "traefik:v3",
+                  ...traefikArgs(networking.listenPort(port), "/etc/traefik/dynamic")
+                ]
+              })
+            )
+          )
       yield* reportExit(proxy)
       yield* Effect.annotateCurrentSpan({ "server.port": port })
       return ProxyAddress.of({ port, url: (host) => proxiedUrl(host, port), metricsHost })

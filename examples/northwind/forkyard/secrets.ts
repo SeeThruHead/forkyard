@@ -13,7 +13,7 @@ export const secretsStore = (options: { readonly secret: string; readonly pick: 
     const text = yield* context.readFile(`${context.root}/${storeFile}`)
     if (Option.isNone(text)) return yield* new Env.EnvError({ source: options.secret, message: `${storeFile} not found` })
 
-    const store = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Store))(text.value).pipe(Effect.mapError(failure(options.secret)))
+    const store = yield* Schema.decodeEffect(Schema.fromJsonString(Store))(text.value).pipe(Effect.mapError(failure(options.secret)))
     const values = store[options.secret] ?? {}
 
     return Object.fromEntries(

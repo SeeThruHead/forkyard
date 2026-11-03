@@ -25,6 +25,8 @@ export const isWheelDown = (event: Mouse) => isWheel(event) && (event.button & 1
 
 export const isClick = (event: Mouse) => event.press && !isWheel(event) && (event.button & 3) === 0 && (event.button & 32) === 0
 
+const graphemes = (text: string) => Array.from(new Intl.Segmenter().segment(text)).length
+
 const enableMouse = "\u001b[?1000h\u001b[?1002h\u001b[?1006h"
 const disableMouse = "\u001b[?1000l\u001b[?1002l\u001b[?1006l"
 
@@ -55,7 +57,7 @@ export const useMouse = (onMouse: (event: Mouse) => void) => {
 export const place = (buttons: ReadonlyArray<Button>): ReadonlyArray<PlacedButton> =>
   buttons.reduce<ReadonlyArray<PlacedButton>>((placed, button) => {
     const from = (placed.at(-1)?.to ?? 0) + 2
-    return [...placed, { ...button, from, to: from + [...button.label].length - 1 }]
+    return [...placed, { ...button, from, to: from + graphemes(button.label) - 1 }]
   }, [])
 
 export const clickedButton = (buttons: ReadonlyArray<PlacedButton>, x: number) =>

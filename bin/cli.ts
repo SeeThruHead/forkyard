@@ -1,5 +1,5 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { Cause, Console, Effect, FileSystem, Layer, Option, Path, Stream } from "effect"
+import { Cause, Config, Console, Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect"
 import { Argument, CliError, Command, Flag } from "effect/cli"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { ForkyardClient } from "../src/Client.ts"
@@ -11,7 +11,7 @@ import type { View } from "../tui/View.ts"
 import * as Service from "./service.ts"
 import { type EnvVar, isSettled, runOf, serviceUrl, type Snapshot, stateDetail, viewLabel, type WorktreeView } from "../src/Model.ts"
 
-const home = process.env.FORKYARD_HOME ?? defaultHome
+const home = Config.String("FORKYARD_HOME").pipe(Config.withDefault(defaultHome))
 
 const tooOld = (daemon: string) =>
   `the running forkyard daemon is ${daemon}, older than this forkyard (v${packageVersion}, protocol ${protocolVersion}). Restart the daemon to upgrade it.`
@@ -27,7 +27,8 @@ const client = Layer.unwrap(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     const os = yield* Os
-    const socket = os.ipcPath(home)
+    const dir = yield* home
+    const socket = os.ipcPath(dir)
 
     if (!(yield* fs.exists(socket))) return yield* Effect.fail("forkyard is not running. Start it with: forkyard daemon")
     return Layer.provideMerge(Layer.effectDiscard(requireCompatibleDaemon), ForkyardClient.layer(socket))
@@ -80,10 +81,10 @@ const describe = (worktree: WorktreeView) => {
   return [...infra, ...services].join("\n")
 }
 
-const invokedFrom = process.env["INIT_CWD"] ?? process.cwd()
+const invokedRoot = Config.String("INIT_CWD").pipe(Config.withDefault(process.cwd()), Effect.flatMap(findRoot))
 
 const target = Effect.fn("target")(function* (branch: Option.Option<string>) {
-  const root = yield* findRoot(invokedFrom)
+  const root = yield* invokedRoot
   const name = Option.isSome(branch) ? branch.value : yield* branchOf(root)
 
   return { root, branch: name }
@@ -94,8 +95,9 @@ const snapshot = ForkyardClient.use((forkyard) =>
 )
 
 const runningHere = Effect.fn("runningHere")(function* () {
-  const root = yield* findRoot(invokedFrom)
-  const match = Object.values(yield* snapshot).find((worktree) => worktree.root === root)
+  const root = yield* invokedRoot
+  const worktrees = yield* snapshot
+  const match = Object.values(worktrees).find((worktree) => worktree.root === root)
 
   if (!match) return yield* Effect.fail("this worktree is not running. Start it with: forkyard up")
   return match
@@ -107,7 +109,9 @@ const parseService = (name: string) => ServiceName.makeEffect(name).pipe(Effect.
 
 const branchFlag = Flag.String("branch").pipe(Flag.optional, Flag.withDescription("Branch name to use instead of the git branch"))
 
-const daemon = Command.make("daemon", {}, () => runDaemon(home)).pipe(Command.withDescription("Run the forkyard daemon in the foreground"))
+const daemon = Command.make("daemon", {}, () => home.pipe(Effect.flatMap(runDaemon))).pipe(
+  Command.withDescription("Run the forkyard daemon in the foreground")
+)
 
 const stoppedWhileStarting = (id: WorktreeId) =>
   `${id} stopped while starting. The reason is in the forkyard log: run forkyard attach, or read the daemon's output.`
@@ -157,7 +161,7 @@ const down = Command.make("down", {}, () =>
 
 const status = Command.make("status", {}, () =>
   Effect.gen(function* () {
-    const worktrees = Object.values(yield* snapshot)
+    const worktrees = yield* snapshot.pipe(Effect.map(Object.values))
     const lines = worktrees.map((worktree) => `${worktree.id}  (${worktree.root})\n${describe(worktree)}`)
 
     yield* Console.log(lines.length === 0 ? "no worktrees running" : lines.join("\n\n"))
@@ -223,7 +227,8 @@ const sharedUpdate = Command.make("update", {}, () =>
   Effect.gen(function* () {
     const forkyard = yield* ForkyardClient
     const worktree = yield* runningHere()
-    yield* Console.log(yield* forkyard.UpdateShared({ id: worktree.id }))
+    const moved = yield* forkyard.UpdateShared({ id: worktree.id })
+    yield* Console.log(moved)
   }).pipe(Effect.scoped, Effect.provide(client))
 ).pipe(Command.withDescription("Move the shared stack to the latest commit of its ref, e.g. origin/main, and restart what it runs"))
 
@@ -260,7 +265,7 @@ const infraCommand = Command.make("infra", { infra: infraArgument, action: actio
 ).pipe(Command.withDescription("Run an action on this worktree's infra, e.g. forkyard infra postgres refresh-golden"))
 
 const startTarget = Effect.fn("startTarget")(function* () {
-  const root = yield* findRoot(invokedFrom).pipe(Effect.option)
+  const root = yield* invokedRoot.pipe(Effect.option)
   if (Option.isNone(root)) return undefined
   return { root: root.value, branch: yield* branchOf(root.value) }
 })
@@ -272,11 +277,12 @@ const attach = Command.make("attach", {}, () =>
   Effect.gen(function* () {
     const checkout = yield* startTarget()
     const tui = yield* Effect.promise(() => import("../tui/Attach.tsx"))
-    yield* tui.attach(yield* Effect.context<ForkyardClient>(), startingView(checkout))
+    const context = yield* Effect.context<ForkyardClient>()
+    yield* tui.attach(context, startingView(checkout))
   }).pipe(Effect.scoped, Effect.provide(client))
 ).pipe(Command.withDescription("Open the terminal UI on this checkout's worktree, or on every worktree when run elsewhere"))
 
-const serviceInstall = Command.make("install", {}, () => Service.install(home)).pipe(
+const serviceInstall = Command.make("install", {}, () => home.pipe(Effect.flatMap(Service.install))).pipe(
   Command.withDescription("Run the daemon as a login service (launchd on macOS, systemd on Linux and WSL)")
 )
 const serviceUninstall = Command.make("uninstall", {}, () => Service.uninstall).pipe(Command.withDescription("Remove the daemon service"))
@@ -318,8 +324,7 @@ const messageOf = (error: unknown): string => {
   return error.cause === undefined ? "" : messageOf(error.cause)
 }
 
-const shownByTheCli = (cause: Cause.Cause<unknown>) =>
-  Option.exists(Cause.findErrorOption(cause), (error) => error instanceof CliError.ShowHelp)
+const shownByTheCli = (cause: Cause.Cause<unknown>) => Option.exists(Cause.findErrorOption(cause), Schema.is(CliError.ShowHelp))
 
 const report = (cause: Cause.Cause<unknown>) =>
   Option.match(Cause.findErrorOption(cause).pipe(Option.map(messageOf), Option.filter(Boolean)), {
@@ -329,15 +334,14 @@ const report = (cause: Cause.Cause<unknown>) =>
 
 const unsupported = unsupportedHere()
 
-if (unsupported) {
-  console.error(unsupported)
-  process.exitCode = 1
-} else {
-  forkyard.pipe(
-    Command.run({ version: packageVersion }),
-    Effect.tapCause((cause) => (Cause.hasInterruptsOnly(cause) || shownByTheCli(cause) ? Effect.void : report(cause))),
-    Effect.provide(NodeServices.layer),
-    Effect.provide(osLayer),
-    NodeRuntime.runMain({ disableErrorReporting: true })
-  )
-}
+const refuse = (reason: string) => Console.error(reason).pipe(Effect.andThen(Effect.fail(reason)))
+
+const run = forkyard.pipe(
+  Command.run({ version: packageVersion }),
+  Effect.tapCause((cause) => (Cause.hasInterruptsOnly(cause) || shownByTheCli(cause) ? Effect.void : report(cause))),
+  Effect.provide([NodeServices.layer, osLayer])
+)
+
+const main = unsupported ? refuse(unsupported) : run
+
+main.pipe(NodeRuntime.runMain({ disableErrorReporting: true }))

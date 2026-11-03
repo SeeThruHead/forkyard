@@ -9,7 +9,7 @@ export const ProcessRow = Schema.Struct({
   pid: Pid,
   daemon_id: Schema.String,
   boot_minute: Schema.Int,
-  started_at: Schema.NullOr(Schema.Number)
+  started_at: Schema.NullOr(Schema.Finite)
 })
 export type ProcessRow = typeof ProcessRow.Type
 

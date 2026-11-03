@@ -1,6 +1,8 @@
 const $ = (selector: string) => document.querySelector<HTMLElement>(selector)!
 const json = (url: string, init?: RequestInit) => fetch(url, init).then((response) => response.json())
 
+type Charge = { readonly id: number; readonly order_id: number; readonly status: string; readonly handled_by: string }
+
 const flagsUrl = String(process.env.FLAGS_BASE_URL)
 $("#branch").textContent = location.hostname.split(".")[1] ?? ""
 $("#flags-url").textContent = flagsUrl
@@ -23,7 +25,7 @@ $("#flags").addEventListener("change", async (event) => {
 })
 
 const refresh = async () => {
-  const charges: ReadonlyArray<Record<string, unknown>> = await json(`${process.env.BILLING_API_URL}/charges`)
+  const charges: ReadonlyArray<Charge> = await json(`${process.env.BILLING_API_URL}/charges`)
   $("#charges").innerHTML = charges
     .map(
       (charge) =>

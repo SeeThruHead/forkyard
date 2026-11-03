@@ -60,7 +60,7 @@ const forwardTelemetry = Effect.fn("Daemon.forwardTelemetry")(
   function* ({ url, headers }: TelemetryTarget) {
     const http = yield* HttpClient.HttpClient
     const request = yield* HttpServerRequest.HttpServerRequest
-    const body = new Uint8Array(yield* request.arrayBuffer)
+    const body = yield* request.arrayBuffer.pipe(Effect.map((buffer) => new Uint8Array(buffer)))
     const target = `${url}${request.url.replace(/^\/otlp/, "")}`
     const contentType = request.headers["content-type"] ?? "application/json"
 

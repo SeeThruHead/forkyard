@@ -31,8 +31,10 @@ export const toolsFor = (proc: Context.Service.Shape<typeof Proc>, instance: str
     proc
       .spawn({ owner: ownerOfInfra(instance), service: spawn.name, run: spawn.run, env: spawn.env, cwd: spawn.cwd ?? process.cwd() })
       .pipe(
-        Effect.map((spawned) => ({ pid: Pid.make(spawned.pid), exited: spawned.exited, output: spawned.output })),
-        Effect.mapError(toInfraError(spawn.name))
+        Effect.mapBoth({
+          onSuccess: (spawned) => ({ pid: Pid.make(spawned.pid), exited: spawned.exited, output: spawned.output }),
+          onFailure: toInfraError(spawn.name)
+        })
       ),
   exec: (exec) =>
     proc
@@ -88,7 +90,12 @@ export class InfraManager extends Context.Service<
             yield* exposeRoutes(name, instance, started)
             const lock = yield* Semaphore.make(1)
 
-            return { ...started, instance, urls: urlsOf(name, instance, started), exclusive: lock.withPermit } satisfies InfraServer
+            return {
+              ...started,
+              instance,
+              urls: urlsOf(name, instance, started),
+              exclusive: Semaphore.withPermit(lock)
+            } satisfies InfraServer
           },
           (effect, key) =>
             effect.pipe(

@@ -55,7 +55,7 @@ export type Snapshot = typeof Snapshot.Type
 export const RunLine = Schema.Struct({
   runId: RunId,
   seq: Schema.Int,
-  at: Schema.Number,
+  at: Schema.Finite,
   line: Schema.String
 })
 export type RunLine = typeof RunLine.Type
@@ -74,13 +74,13 @@ const runFields = {
   n: RunNumber,
   pid: Pid,
   command: Schema.String,
-  startedAt: Schema.Number
+  startedAt: Schema.Finite
 }
 
 export const RunInfo = Schema.Union([
   Schema.TaggedStruct("Running", runFields),
-  Schema.TaggedStruct("Exited", { ...runFields, endedAt: Schema.Number, exitCode: Schema.Int }),
-  Schema.TaggedStruct("Stopped", { ...runFields, endedAt: Schema.Number })
+  Schema.TaggedStruct("Exited", { ...runFields, endedAt: Schema.Finite, exitCode: Schema.Int }),
+  Schema.TaggedStruct("Stopped", { ...runFields, endedAt: Schema.Finite })
 ])
 export type RunInfo = typeof RunInfo.Type
 
@@ -103,10 +103,10 @@ export const DaemonInfo = Schema.Struct({
 })
 export type DaemonInfo = typeof DaemonInfo.Type
 
-export const UsageMap = Schema.Record(Schema.String, Schema.Struct({ cpu: Schema.Number, rssKb: Schema.Number }))
+export const UsageMap = Schema.Record(Schema.String, Schema.Struct({ cpu: Schema.Finite, rssKb: Schema.Finite }))
 export type UsageMap = typeof UsageMap.Type
 
-export const DaemonLine = Schema.Struct({ at: Schema.Number, level: Schema.String, message: Schema.String })
+export const DaemonLine = Schema.Struct({ at: Schema.Finite, level: Schema.String, message: Schema.String })
 export type DaemonLine = typeof DaemonLine.Type
 
 export const runOf = (state: ServiceState): RunRef | undefined => ("run" in state ? state.run : undefined)

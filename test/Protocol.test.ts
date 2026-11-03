@@ -6,7 +6,9 @@ import { protocolVersion } from "../src/Package.ts"
 import { ForkyardRpcs } from "../src/Protocol.ts"
 
 const fixture = (version: number, name: string): unknown =>
-  JSON.parse(readFileSync(new URL(`./protocol/v${version}/${name}.json`, import.meta.url), "utf8"))
+  Schema.decodeSync(Schema.fromJsonString(Schema.Unknown))(
+    readFileSync(new URL(`./protocol/v${version}/${name}.json`, import.meta.url), "utf8")
+  )
 
 const publicRpcs = [
   "Info",

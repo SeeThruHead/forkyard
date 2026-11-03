@@ -36,7 +36,7 @@ export const show = <A, E>(result: AsyncResult.AsyncResult<A, E>, render: (value
     onSuccess: (success) => render(success.value)
   })
 
-const hue = (text: string) => [...text].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 360, 7)
+const hue = (text: string) => text.split("").reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 360, 7)
 
 export const Branch = ({ name }: { readonly name: string }) => (
   <span className="branch" style={{ background: `hsl(${hue(name)} 55% 34%)` }}>

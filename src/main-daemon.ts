@@ -8,6 +8,7 @@ import { Os } from "./platform/Os.ts"
 import { Upgrade } from "./Upgrade.ts"
 import { dashboardDir, defaultHome, httpPortFile, packageVersion } from "./Package.ts"
 import { allocatePort } from "./Ports.ts"
+import { dockerSettingsFromEnv } from "./infra/Shared.ts"
 import { Config, Effect, FileSystem, Layer, Option, Path } from "effect"
 import { availableParallelism } from "node:os"
 import * as Daemon from "./Daemon.ts"
@@ -57,16 +58,17 @@ const prepareHome = Effect.fn("prepareHome")(function* (home: string) {
   yield* fs.remove(socket, { force: true })
 })
 
-const localhostResolves = Effect.tryPromise(() => lookup("forkyard-probe.localhost")).pipe(
-  Effect.as(true),
-  Effect.orElseSucceed(() => false)
-)
-
-const writable = (file: string) =>
-  Effect.tryPromise(() => access(file, constants.W_OK)).pipe(
-    Effect.as(true),
-    Effect.orElseSucceed(() => false)
+const settles = (promise: () => Promise<unknown>) =>
+  Effect.promise(() =>
+    promise().then(
+      () => true,
+      () => false
+    )
   )
+
+const localhostResolves = settles(() => lookup("forkyard-probe.localhost"))
+
+const writable = (file: string) => settles(() => access(file, constants.W_OK))
 
 const chooseHostsFile = Effect.fn("chooseHostsFile")(function* (configured: Option.Option<string>) {
   const os = yield* Os
@@ -121,8 +123,11 @@ export const runDaemon = Effect.fn("runDaemon")(function* (home: string) {
 
   const upgrade = Upgrade.layer({ supervised: config.supervised })
   const httpPort = yield* Option.match(config.httpPort, { onNone: () => allocatePort, onSome: (port) => Effect.succeed(Port.make(port)) })
-  const daemon = Daemon.layer(optionsFor(home, path, yield* Os, config, yield* chooseHostsFile(config.hostsFile), httpPort)).pipe(
-    Layer.provideMerge(upgrade)
+  const os = yield* Os
+  const hostsFile = yield* chooseHostsFile(config.hostsFile)
+  const daemon = Daemon.layer(optionsFor(home, path, os, config, hostsFile, httpPort)).pipe(
+    Layer.provideMerge(upgrade),
+    Layer.provide(dockerSettingsFromEnv)
   )
 
   yield* Effect.scoped(

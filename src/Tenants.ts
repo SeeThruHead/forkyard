@@ -14,13 +14,17 @@ const StoredWorktree = Schema.Struct({
   proxyPort: Port
 })
 
-const decodeWorktree = Schema.decodeUnknownEffect(Schema.fromJsonString(StoredWorktree))
+const WorktreeJson = Schema.fromJsonString(StoredWorktree)
+
+const decodeWorktree = Schema.decodeUnknownEffect(WorktreeJson)
+
+const encodeWorktree = Schema.encodeEffect(WorktreeJson)
 
 const TenantRow = Schema.Struct({
   tenant: Schema.String,
   worktree: Schema.String,
   root: Schema.String,
-  last_used: Schema.Number
+  last_used: Schema.Finite
 })
 
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(TenantRow))
@@ -49,11 +53,11 @@ export class Tenants extends Context.Service<
       const live = yield* Ref.make<Readonly<Record<string, number>>>({})
 
       const stamp = (infra: InfraName, instance: string, tenant: Worktree) =>
-        Clock.currentTimeMillis.pipe(
+        Effect.all([Clock.currentTimeMillis, encodeWorktree(tenant)]).pipe(
           Effect.flatMap(
-            (now) =>
+            ([now, worktree]) =>
               sql`INSERT INTO infra_tenants (infra, instance, tenant, worktree, root, last_used)
-                VALUES (${infra}, ${instance}, ${tenant.id}, ${JSON.stringify(tenant)}, ${tenant.root}, ${now})
+                VALUES (${infra}, ${instance}, ${tenant.id}, ${worktree}, ${tenant.root}, ${now})
                 ON CONFLICT (infra, instance, tenant, root) DO UPDATE SET last_used = excluded.last_used, worktree = excluded.worktree`
           ),
           Effect.orDie,
@@ -92,13 +96,9 @@ export class Tenants extends Context.Service<
         const rows = yield* rowsOf(infra, instance)
         const usages = rows.map((row) => ({ tenant: row.tenant, root: row.root, lastUsed: row.last_used }))
         const now = yield* Clock.currentTimeMillis
-        const doomed = reapable(
-          usages,
-          yield* liveTenants(infra, instance),
-          yield* existingRoots([...new Set(rows.map((row) => row.root))]),
-          now,
-          graceMillis
-        )
+        const live = yield* liveTenants(infra, instance)
+        const existing = yield* existingRoots([...new Set(rows.map((row) => row.root))])
+        const doomed = reapable(usages, live, existing, now, graceMillis)
         return yield* Effect.forEach(doomed, (tenant) =>
           decodeWorktree(rows.find((row) => row.tenant === tenant)?.worktree ?? "").pipe(Effect.orDie)
         )

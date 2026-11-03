@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Effect, Option } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { dotenv, type EnvLoadContext, varlock } from "../src/EnvSource.ts"
 import { mergeEnv } from "../src/Env.ts"
 
@@ -59,7 +59,7 @@ describe("env", () => {
 
   it.effect("varlock items without a value (unset @optional keys) are skipped, not an error", () =>
     Effect.gen(function* () {
-      const output = JSON.stringify({
+      const output = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
         config: {
           DB_PORT: { value: 6111, isSensitive: false },
           HEALTH_PORT: { isSensitive: false },

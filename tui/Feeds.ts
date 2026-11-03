@@ -81,7 +81,7 @@ export const worktreeLogFeed = Effect.fn("Tui.worktreeLogFeed")(function* (id: W
   const followers = yield* FiberMap.make<string>()
   const following = yield* Ref.make<Readonly<Record<string, string>>>({})
 
-  const startIfNew = (key: string, marker: string, start: Effect.Effect<void, unknown, ForkyardClient>) =>
+  const startIfNew = <E>(key: string, marker: string, start: Effect.Effect<void, E, ForkyardClient>) =>
     Ref.get(following).pipe(
       Effect.flatMap((current) => {
         if (current[key] === marker) return Effect.void

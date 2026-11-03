@@ -47,7 +47,8 @@ export class ProcessUsage extends Context.Service<ProcessUsage, { readonly chang
       const latest = yield* SubscriptionRef.make<UsageMap>({})
 
       const sample = Effect.gen(function* () {
-        const pids = pidsOf(yield* status.snapshot)
+        const snapshot = yield* status.snapshot
+        const pids = pidsOf(snapshot)
         const rows = yield* os.processTable
         yield* SubscriptionRef.set(latest, usageOf(rows, pids))
       })

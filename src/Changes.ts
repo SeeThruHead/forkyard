@@ -29,8 +29,8 @@ export class Changes extends Context.Service<
 
       const session = Effect.fn("Changes.session")(function* (hook: InputsHook, worktree: Worktree) {
         const run = scopedExec(worktree.id, worktree.root)
-        const cache = yield* Cache.make({ lookup: (key: string) => run(JSON.parse(key) as Run).pipe(Effect.scoped), capacity: 64 })
-        const cachedExec = (command: Run) => Cache.get(cache, JSON.stringify(command))
+        const cache = yield* Cache.make({ lookup: (command: Run) => run(command).pipe(Effect.scoped), capacity: 64 })
+        const cachedExec = (command: Run) => Cache.get(cache, command)
         const inputsOf = (target: InputsTarget) => hook(target, { root: worktree.root, exec: cachedExec }).pipe(Effect.scoped)
 
         const touchedBy = Effect.fn("Changes.touched")(function* (targets: ReadonlyArray<InputsTarget>, base: string) {

@@ -28,7 +28,7 @@ export class Pins extends Context.Service<
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       const load = sql`SELECT worktree, service, kind FROM pins`.pipe(Effect.flatMap(decodeRows), Effect.orDie)
-      const state = yield* SubscriptionRef.make(yield* load)
+      const state = yield* load.pipe(Effect.flatMap(SubscriptionRef.make))
       const reload = load.pipe(Effect.flatMap((rows) => SubscriptionRef.set(state, rows)))
 
       const pin = (id: WorktreeId, service: string, kind: PinKind) =>

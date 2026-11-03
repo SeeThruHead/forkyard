@@ -1,8 +1,10 @@
 import { Effect, Predicate, Schedule, Schema } from "effect"
 
-export class NotReady extends Schema.TaggedError<NotReady>()("NotReady", { message: Schema.String }) {}
+export class NotReady extends Schema.TaggedError<NotReady, { readonly brand: unique symbol }>()("NotReady", { message: Schema.String }) {}
 
-export class ExitedBeforeReady extends Schema.TaggedError<ExitedBeforeReady>()("ExitedBeforeReady", { message: Schema.String }) {}
+export class ExitedBeforeReady extends Schema.TaggedError<ExitedBeforeReady, { readonly brand: unique symbol }>()("ExitedBeforeReady", {
+  message: Schema.String
+}) {}
 
 export type Exits = {
   readonly exited: Effect.Effect<number>

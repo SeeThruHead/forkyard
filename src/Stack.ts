@@ -33,12 +33,12 @@ export type Run = Command | ShellScript
 
 export type Env = Readonly<Record<string, string>>
 
-export class InfraError extends Schema.TaggedError<InfraError>()("InfraError", {
+export class InfraError extends Schema.TaggedError<InfraError, { readonly brand: unique symbol }>()("InfraError", {
   infra: Schema.String,
   message: Schema.String
 }) {}
 
-export class ConfigError extends Schema.TaggedError<ConfigError>()("ConfigError", {
+export class ConfigError extends Schema.TaggedError<ConfigError, { readonly brand: unique symbol }>()("ConfigError", {
   message: Schema.String
 }) {}
 

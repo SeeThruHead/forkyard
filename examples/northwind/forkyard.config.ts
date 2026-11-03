@@ -1,5 +1,5 @@
 import { Env, Infra, logLine, make, Nats, node, Postgres, Process, profile, Redis, Service, Temporal, url, watch } from "forkyard"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { secretsStore } from "./forkyard/secrets.ts"
 
 const schema = (file: string) => [Env.varlock({ schema: file })]
@@ -244,6 +244,9 @@ export default make(
         env: { API_URL: coreApiUrl },
         watch: watch("apps/fake-kyc/src/**")
       })
+    const authClients = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))([
+      { id: "portal", redirect_uris: [`${portalUrl}/login`] }
+    ]).pipe(Effect.orDie)
     const auth = yield* Service.http("auth", {
       run: "pnpm --filter @northwind/auth run dev",
       uses: [redis],
@@ -252,7 +255,7 @@ export default make(
         ISSUER: yield* url("auth"),
         UI_ORIGIN: authUiUrl,
         DEFAULT_POST_LOGIN_URL: `${portalUrl}/login`,
-        CLIENTS_JSON: JSON.stringify([{ id: "portal", redirect_uris: [`${portalUrl}/login`] }]),
+        CLIENTS_JSON: authClients,
         ALLOWED_ORIGINS: authUiUrl
       },
       watch: watch("apps/auth/src/**")

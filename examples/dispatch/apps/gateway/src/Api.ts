@@ -4,13 +4,13 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 export const DeliveryEvent = Schema.Struct({ step: Schema.String, namespace: Schema.String, handledBy: Schema.String })
 
 export const Delivery = Schema.Struct({
-  id: Schema.Number,
+  id: Schema.Finite,
   address: Schema.String,
   courier: Schema.NullOr(Schema.String),
   events: Schema.Array(DeliveryEvent)
 })
 
-export const Created = Schema.Struct({ id: Schema.Number, workflowId: Schema.String })
+export const Created = Schema.Struct({ id: Schema.Finite, workflowId: Schema.String })
 
 export const GatewayApi = HttpApi.make("gateway").add(
   HttpApiGroup.make("deliveries", { topLevel: true }).add(

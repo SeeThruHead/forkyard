@@ -1,4 +1,5 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react"
+import { Option, Schema } from "effect"
 import { AsyncResult } from "effect/reactivity"
 import { useState } from "react"
 import { ServiceName } from "../../src/Ids.ts"
@@ -22,7 +23,10 @@ import { go } from "./ui.tsx"
 
 const collapsedKey = "forkyard.collapsed"
 
-const readCollapsed = (): ReadonlyArray<string> => JSON.parse(localStorage.getItem(collapsedKey) ?? "[]")
+const CollapsedJson = Schema.fromJsonString(Schema.Array(Schema.String))
+
+const readCollapsed = (): ReadonlyArray<string> =>
+  Schema.decodeUnknownOption(CollapsedJson)(localStorage.getItem(collapsedKey)).pipe(Option.getOrElse(() => []))
 
 const toggled = (list: ReadonlyArray<string>, item: string) =>
   list.includes(item) ? list.filter((other) => other !== item) : [...list, item]
@@ -237,7 +241,7 @@ export const Home = ({ snapshot, usage }: { readonly snapshot: Snapshot; readonl
 
   const toggle = (project: string) => {
     const next = toggled(collapsed, project)
-    localStorage.setItem(collapsedKey, JSON.stringify(next))
+    localStorage.setItem(collapsedKey, Schema.encodeSync(CollapsedJson)(next))
     setCollapsed(next)
   }
 

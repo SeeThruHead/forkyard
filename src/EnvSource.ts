@@ -2,7 +2,7 @@ import { Effect, Option, Schema, type Scope } from "effect"
 import { parseEnv } from "node:util"
 import type { Command, Env, Run } from "./Stack.ts"
 
-export class EnvError extends Schema.TaggedError<EnvError>()("EnvError", {
+export class EnvError extends Schema.TaggedError<EnvError, { readonly brand: unique symbol }>()("EnvError", {
   source: Schema.String,
   message: Schema.String
 }) {}
@@ -63,7 +63,7 @@ export const varlock = (options: { readonly run?: Command; readonly path?: strin
     const run = yield* varlockCommand(context, root, options.run)
     const entry = options.schema ? ["--path", `${context.root}/${options.schema}`] : []
     const json = yield* context.exec({ command: run.command, args: [...run.args, "load", ...entry, "--format", "json-full"] }, root)
-    const output = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(VarlockOutput))(json).pipe(
+    const output = yield* Schema.decodeEffect(Schema.fromJsonString(VarlockOutput))(json).pipe(
       Effect.mapError((error) => new EnvError({ source: "varlock", message: error.message }))
     )
 
@@ -87,7 +87,7 @@ export const compose = (options: { readonly service: string; readonly file?: str
   load: Effect.fn("EnvSource.compose")(function* (context: EnvLoadContext) {
     const file = options.file ?? "docker-compose.yml"
     const json = yield* context.exec({ command: "docker", args: ["compose", "-f", file, "config", "--format", "json"] }, context.root)
-    const config = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ComposeConfig))(json).pipe(
+    const config = yield* Schema.decodeEffect(Schema.fromJsonString(ComposeConfig))(json).pipe(
       Effect.mapError((error) => new EnvError({ source: "compose", message: error.message }))
     )
     const service = config.services[options.service]

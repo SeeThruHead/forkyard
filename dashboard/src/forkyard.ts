@@ -27,11 +27,7 @@ export class Forkyard extends AtomRpc.Service<Forkyard>()("Forkyard", {
   )
 }) {}
 
-const client = Effect.gen(function* () {
-  return yield* Forkyard
-})
-
-const stream = <A, E>(make: (forkyard: typeof Forkyard.Service) => Stream.Stream<A, E>) => Stream.unwrap(Effect.map(client, make))
+const stream = <A, E>(make: (forkyard: typeof Forkyard.Service) => Stream.Stream<A, E>) => Stream.unwrap(Forkyard.useSync(make))
 
 export const snapshotAtom = Forkyard.runtime.atom(stream((forkyard) => forkyard("Status", undefined))).pipe(Atom.keepAlive)
 
@@ -51,20 +47,18 @@ export const runsKey = (owner: ProcessOwner, service: string, version: string) =
 
 export const runsAtom = Atom.family((key: string) => {
   const [owner, service] = key.split("|") as [string, string]
-  return Forkyard.runtime.atom(Effect.flatMap(client, (forkyard) => forkyard("Runs", { owner: ProcessOwner.make(owner), service })))
+  return Forkyard.runtime.atom(Forkyard.use((forkyard) => forkyard("Runs", { owner: ProcessOwner.make(owner), service })))
 })
 
 export const envKey = (id: WorktreeId, service: ServiceName, version: string) => `${id}|${service}|${version}`
 
 export const envAtom = Atom.family((key: string) => {
   const [id, service] = key.split("|") as [string, string]
-  return Forkyard.runtime.atom(
-    Effect.flatMap(client, (forkyard) => forkyard("Env", { id: WorktreeId.make(id), service: ServiceName.make(service) }))
-  )
+  return Forkyard.runtime.atom(Forkyard.use((forkyard) => forkyard("Env", { id: WorktreeId.make(id), service: ServiceName.make(service) })))
 })
 
 export const restartAtom = Forkyard.runtime.fn((target: { readonly id: WorktreeId; readonly service: ServiceName }) =>
-  Effect.flatMap(client, (forkyard) => forkyard("Restart", target)).pipe(
+  Forkyard.use((forkyard) => forkyard("Restart", target)).pipe(
     Effect.withSpan("Dashboard.restart", { attributes: { "forkyard.worktree": target.id, "forkyard.service": target.service } })
   )
 )
@@ -116,7 +110,5 @@ export const allLogsAtom = Atom.family((key: string) =>
 )
 
 export const stopAtom = Forkyard.runtime.fn((id: WorktreeId) =>
-  Effect.flatMap(client, (forkyard) => forkyard("Down", { id })).pipe(
-    Effect.withSpan("Dashboard.stop", { attributes: { "forkyard.worktree": id } })
-  )
+  Forkyard.use((forkyard) => forkyard("Down", { id })).pipe(Effect.withSpan("Dashboard.stop", { attributes: { "forkyard.worktree": id } }))
 )

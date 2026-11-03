@@ -7,6 +7,11 @@ type Delivery = {
 }
 
 const rows = document.querySelector<HTMLTableSectionElement>("#rows")!
+const textField = (form: HTMLFormElement, name: string) => {
+  const value = new FormData(form).get(name)
+  return typeof value === "string" ? value : ""
+}
+
 const form = document.querySelector<HTMLFormElement>("#create")!
 
 document.querySelector("#branch")!.textContent = location.hostname.split(".")[1] ?? ""
@@ -23,7 +28,7 @@ const refresh = async () => {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault()
-  const address = String(new FormData(form).get("address"))
+  const address = textField(form, "address")
   await fetch("/api/deliveries", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ address }) })
   await refresh()
 })

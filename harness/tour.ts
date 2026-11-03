@@ -1,5 +1,5 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { Clock, Console, Effect, FileSystem, Option, Path, Ref, Schedule, Stream } from "effect"
+import { Clock, Config, Console, Effect, FileSystem, Layer, Option, Path, Ref, Schedule, Schema, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { ForkyardClient } from "../src/Client.ts"
 import { defaultHome } from "../src/main-daemon.ts"
@@ -37,17 +37,25 @@ const apiReady = (snapshot: Snapshot, id: string) => snapshot[wt(id)]?.services[
 
 const url = (service: string, target: string) => `http://${service}.${target}.localhost`
 
+const attempt = <A>(promise: () => Promise<A>) => Effect.tryPromise({ try: promise, catch: String })
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))
+
+const forkyardHome = Config.String("FORKYARD_HOME").pipe(Config.withDefault(defaultHome))
+
 const getJson = (address: string) =>
-  Effect.tryPromise(() =>
+  attempt(() =>
     fetch(address).then((response) => (response.ok ? response.json() : Promise.reject(new Error(`${address} -> ${response.status}`))))
   ).pipe(Effect.retry(Schedule.spaced("250 millis").pipe(Schedule.upTo({ duration: "10 seconds" }))))
 
-const statusOf = (address: string) => Effect.tryPromise(() => fetch(address).then((response) => response.status))
+const statusOf = (address: string) => attempt(() => fetch(address).then((response) => response.status))
 
 const postJson = (address: string, body: unknown) =>
-  Effect.tryPromise(() =>
-    fetch(address, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((response) =>
-      response.json()
+  encodeJson(body).pipe(
+    Effect.flatMap((json) =>
+      attempt(() =>
+        fetch(address, { method: "POST", headers: { "content-type": "application/json" }, body: json }).then((response) => response.json())
+      )
     )
   )
 
@@ -56,7 +64,7 @@ const program = Effect.gen(function* () {
   const path = yield* Path.Path
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
   const root = path.resolve(".")
-  const home = process.env.FORKYARD_HOME ?? defaultHome
+  const home = yield* forkyardHome
   const socket = path.join(home, "forkyard.sock")
   const checks = yield* Ref.make<ReadonlyArray<string>>([])
   const say = (line: string) => Console.log(line).pipe(Effect.andThen(Ref.update(checks, (all) => [...all, line])))
@@ -73,7 +81,7 @@ const program = Effect.gen(function* () {
   const envVar = (vars: ReadonlyArray<EnvVar>, key: string) => vars.find((entry) => entry.key === key)
 
   yield* step("1. reset: stop old worktrees, drop the shared Postgres volume, copy fresh checkouts")
-  const running = Object.keys(yield* snapshot).map(wt)
+  const running = yield* snapshot.pipe(Effect.map((all) => Object.keys(all).map(wt)))
   yield* Effect.forEach(running, (id) => forkyard.Down({ id }), { discard: true })
   yield* Effect.sleep("3 seconds")
   yield* run("docker", "volume", "rm", "-f", "forkyard-postgres-shared-data").pipe(Effect.ignore)
@@ -337,8 +345,10 @@ const program = Effect.gen(function* () {
     "two Temporal clusters per branch, four in total",
     new Set([...nwInfo.map((info: any) => info.temporal), ...billingInfo.map((info: any) => info.temporal)]).size === 4
   )
-  const corePg = envVar(yield* envOf(nwFeat, "core-api"), "DB_PORT")?.value
-  const billingPg = envVar(yield* envOf(nwFeat, "billing-api"), "DB_PORT")?.value
+  const coreApiEnv = yield* envOf(nwFeat, "core-api")
+  const billingApiEnv = yield* envOf(nwFeat, "billing-api")
+  const corePg = envVar(coreApiEnv, "DB_PORT")?.value
+  const billingPg = envVar(billingApiEnv, "DB_PORT")?.value
   yield* check(
     "billing has its own Postgres server",
     corePg !== undefined && billingPg !== undefined && corePg !== billingPg,
@@ -413,7 +423,7 @@ const program = Effect.gen(function* () {
   )
   yield* check("the confirmation email reached the shared Mailpit, tagged with its branch", mail.messages.length > 0)
 
-  yield* Effect.tryPromise(() =>
+  yield* attempt(() =>
     fetch(`${url("flags", nwFeat)}/flags/gift-cards`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -426,7 +436,7 @@ const program = Effect.gen(function* () {
     flagValues[1]["gift-cards"] === true && flagValues[0]["gift-cards"] === false
   )
   const banners = yield* Effect.forEach(nwIds, (id) =>
-    Effect.tryPromise(() => fetch(`${url("image-api", id)}/images/banner.svg`).then((response) => response.text()))
+    attempt(() => fetch(`${url("image-api", id)}/images/banner.svg`).then((response) => response.text()))
   )
   yield* check(
     "the shared object store keeps each branch's objects apart (bucket per branch from env)",
@@ -436,7 +446,7 @@ const program = Effect.gen(function* () {
   yield* check("one shared catalog serves both branches", skuCounts[0].length === skuCounts[1].length && skuCounts[0].length > 0)
 
   const allowOrigin = (target: string, origin: string) =>
-    Effect.tryPromise(() =>
+    attempt(() =>
       fetch(target, { method: "OPTIONS", headers: { origin, "access-control-request-method": "GET" } }).then((response) =>
         response.headers.get("access-control-allow-origin")
       )
@@ -495,16 +505,10 @@ const program = Effect.gen(function* () {
 
   const telemetryChecks = Effect.fnUntraced(function* (mapleUrl: string) {
     yield* step("12. telemetry: everything above landed in Maple")
-    yield* Effect.tryPromise(() => fetch(url("shop", "feat-gift-cards.storefront")).then((response) => response.text()))
-    yield* Effect.tryPromise(() => fetch(`${url("reports", "feat-gift-cards.storefront")}/sales`).then((response) => response.text()))
-    const query = (sql: string) =>
-      Effect.tryPromise(() =>
-        fetch(`${mapleUrl}/local/query`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sql })
-        }).then((response) => response.json() as Promise<ReadonlyArray<Record<string, unknown>>>)
-      )
+    yield* attempt(() => fetch(url("shop", "feat-gift-cards.storefront")).then((response) => response.text()))
+    yield* attempt(() => fetch(`${url("reports", "feat-gift-cards.storefront")}/sales`).then((response) => response.text()))
+    const query = (sql: string): Effect.Effect<ReadonlyArray<Record<string, unknown>>, Schema.SchemaError | string> =>
+      postJson(`${mapleUrl}/local/query`, { sql })
     const count = (sql: string) => query(sql).pipe(Effect.map((rows) => Number(rows[0]?.n ?? 0)))
     const eventually = (sql: string) =>
       count(sql).pipe(
@@ -584,8 +588,8 @@ const program = Effect.gen(function* () {
     yield* check("Bun and Python apps have logs without any OTel SDK", bunLogs > 0 && pythonLogs > 0)
   })
 
-  const mapleUrl = process.env.TOUR_MAPLE_URL
-  if (mapleUrl) yield* telemetryChecks(mapleUrl)
+  const mapleUrl = yield* Config.option(Config.String("TOUR_MAPLE_URL"))
+  if (Option.isSome(mapleUrl)) yield* telemetryChecks(mapleUrl.value)
   else yield* say("12. telemetry: skipped (run the daemon with FORKYARD_OTLP_URL pointing at a Maple and set TOUR_MAPLE_URL to check it)")
 
   const lines = yield* Ref.get(checks)
@@ -598,7 +602,9 @@ const program = Effect.gen(function* () {
 
 program.pipe(
   Effect.scoped,
-  Effect.provide(ForkyardClient.layer(`${process.env.FORKYARD_HOME ?? defaultHome}/forkyard.sock`)),
-  Effect.provide(NodeServices.layer),
+  Effect.provide([
+    Layer.unwrap(forkyardHome.pipe(Effect.map((home) => ForkyardClient.layer(`${home}/forkyard.sock`)))),
+    NodeServices.layer
+  ]),
   NodeRuntime.runMain
 )

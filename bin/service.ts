@@ -20,11 +20,13 @@ const daemonCommand = (): ReadonlyArray<string> => {
   return [process.execPath, ...runtimeFlags, fromPackage("dist", "bin", "forkyard.js"), "daemon"]
 }
 
+const forwarded = (name: string) => name === "PATH" || name.startsWith("FORKYARD_")
+
 const serviceEnv = (): Readonly<Record<string, string>> => ({
-  PATH: process.env.PATH ?? "/usr/bin:/bin",
+  PATH: "/usr/bin:/bin",
   HOME: homedir(),
   ...Object.fromEntries(
-    Object.entries(process.env).filter((entry): entry is [string, string] => entry[0].startsWith("FORKYARD_") && entry[1] !== undefined)
+    Object.entries(process.env).filter((entry): entry is [string, string] => forwarded(entry[0]) && entry[1] !== undefined)
   ),
   FORKYARD_SUPERVISED: "true"
 })

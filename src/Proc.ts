@@ -12,7 +12,7 @@ import { Runs } from "./Runs.ts"
 import type { Env, Run } from "./Stack.ts"
 import { Status } from "./Status.ts"
 
-export class SpawnError extends Schema.TaggedError<SpawnError>()("SpawnError", {
+export class SpawnError extends Schema.TaggedError<SpawnError, { readonly brand: unique symbol }>()("SpawnError", {
   service: Schema.String,
   message: Schema.String
 }) {}

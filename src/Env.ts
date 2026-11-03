@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, FiberSet, FileSystem, Layer, Metric, Option, Ref } from "effect"
+import { Clock, Context, Effect, FiberSet, FileSystem, Layer, Metric, Ref } from "effect"
 import { EnvError, type EnvEntry, type EnvLoadContext, type EnvSource, looksSensitive } from "./EnvSource.ts"
 import { ownerOfWorktree, type Port, type ServiceName, type WorktreeId } from "./Ids.ts"
 import * as Metrics from "./Metrics.ts"
@@ -118,7 +118,7 @@ export class EnvResolver extends Context.Service<
 
       const readFile = (path: string) =>
         fs.exists(path).pipe(
-          Effect.flatMap((present) => (present ? fs.readFileString(path).pipe(Effect.map(Option.some)) : Effect.succeedNone)),
+          Effect.flatMap((present) => (present ? fs.readFileString(path).pipe(Effect.asSome) : Effect.succeedNone)),
           Effect.mapError((error) => new EnvError({ source: path, message: error.message }))
         )
 

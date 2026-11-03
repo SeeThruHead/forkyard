@@ -1,3 +1,4 @@
+import { Schema } from "effect"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
@@ -5,10 +6,14 @@ import { fileURLToPath } from "node:url"
 
 export const protocolVersion = 1
 
+const nameOf = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({ name: Schema.optional(Schema.String) })))
+
+const versionOf = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({ version: Schema.String })))
+
 const ownsPackage = (dir: string) => {
   const file = join(dir, "package.json")
   if (!existsSync(file)) return false
-  return JSON.parse(readFileSync(file, "utf8")).name === "forkyard"
+  return nameOf(readFileSync(file, "utf8")).name === "forkyard"
 }
 
 const findRoot = (dir: string): string => {
@@ -22,7 +27,7 @@ const throughBrewOpt = (root: string) => root.replace(/\/Cellar\/forkyard\/[^/]+
 
 export const packageRoot = throughBrewOpt(findRoot(dirname(fileURLToPath(import.meta.url))))
 
-export const packageVersion: string = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")).version
+export const packageVersion = versionOf(readFileSync(join(packageRoot, "package.json"), "utf8")).version
 
 export const fromPackage = (...parts: ReadonlyArray<string>) => join(packageRoot, ...parts)
 

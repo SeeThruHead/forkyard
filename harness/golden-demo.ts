@@ -91,8 +91,10 @@ const program = Effect.gen(function* () {
 
 program.pipe(
   Effect.provide(
-    Golden.layer({ golden: "shop_golden", prefix: "shop_wt" }).pipe(Layer.provideMerge(PgClient.layer({ url: url("postgres") })))
+    Golden.layer({ golden: "shop_golden", prefix: "shop_wt" }).pipe(
+      Layer.provideMerge(PgClient.layer({ url: url("postgres") })),
+      Layer.provideMerge(NodeServices.layer)
+    )
   ),
-  Effect.provide(NodeServices.layer),
   NodeRuntime.runMain
 )

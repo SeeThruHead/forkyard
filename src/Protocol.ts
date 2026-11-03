@@ -3,7 +3,7 @@ import { Rpc, RpcGroup } from "effect/rpc"
 import { AbsolutePath, InfraName, ProcessOwner, RunId, ServiceName, WorktreeId } from "./Ids.ts"
 import { DaemonInfo, DaemonLine, EnvVar, UsageMap, LogLine, RunInfo, RunLine, Snapshot } from "./Model.ts"
 
-export class ForkyardError extends Schema.TaggedError<ForkyardError>()("ForkyardError", {
+export class ForkyardError extends Schema.TaggedError<ForkyardError, { readonly brand: unique symbol }>()("ForkyardError", {
   message: Schema.String
 }) {}
 
@@ -32,7 +32,7 @@ export class ForkyardRpcs extends RpcGroup.make(
   Rpc.make("UpdateShared", { payload: InWorktree, success: Schema.String, error: ForkyardError }),
   Rpc.make("Runs", { payload: { owner: ProcessOwner, service: Schema.String }, success: Schema.Array(RunInfo) }),
   Rpc.make("RunLog", { payload: { runId: RunId }, success: RunLine, stream: true }),
-  Rpc.make("Routes", { success: Schema.Record(Schema.String, Schema.Number) }),
+  Rpc.make("Routes", { success: Schema.Record(Schema.String, Schema.Finite) }),
   Rpc.make("Infra", { success: Schema.Array(Schema.String) }),
   Rpc.make("DaemonLogs", { success: DaemonLine, stream: true }),
   Rpc.make("Usage", { success: UsageMap, stream: true }),

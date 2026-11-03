@@ -34,12 +34,13 @@ import * as Metrics from "./Metrics.ts"
 import type { RunRef, ServiceState, ServiceView } from "./Model.ts"
 import { Pins } from "./Pins.ts"
 import { demandedNames, localNames } from "./Placement.ts"
-import { plan } from "./Plan.ts"
+import { plan, type PlanError } from "./Plan.ts"
 import { allocatePort } from "./Ports.ts"
 import { Proc, type Spawned } from "./Proc.ts"
 import { pollUntilReady, unlessItExits } from "./Readiness.ts"
 import { Router } from "./Router.ts"
 import {
+  type ConfigError,
   defaultProfile,
   hostOf,
   InfraError,
@@ -59,7 +60,7 @@ import { Status } from "./Status.ts"
 import { Waker } from "./Waker.ts"
 import { changesUnder } from "./Watch.ts"
 
-export class DependencyFailed extends Schema.TaggedError<DependencyFailed>()("DependencyFailed", {
+export class DependencyFailed extends Schema.TaggedError<DependencyFailed, { readonly brand: unique symbol }>()("DependencyFailed", {
   service: Schema.String
 }) {}
 
@@ -158,7 +159,7 @@ const rootsOf = (services: ReadonlyArray<ServiceNode>, own: ReadonlySet<string>,
 export class Supervisor extends Context.Service<
   Supervisor,
   {
-    readonly run: (stack: Stack, worktree: Worktree) => Effect.Effect<never, unknown, Scope.Scope>
+    readonly run: (stack: Stack, worktree: Worktree) => Effect.Effect<never, ConfigError | PlanError | InfraError, Scope.Scope>
     readonly restart: (id: WorktreeId, service: ServiceName) => Effect.Effect<void>
     readonly own: (id: WorktreeId, service: ServiceName) => Effect.Effect<void>
     readonly share: (id: WorktreeId, service: ServiceName) => Effect.Effect<void>
@@ -241,15 +242,18 @@ export class Supervisor extends Context.Service<
             Effect.withSpan("Supervisor.waitRouted", { attributes: { "url.full": `${base}${path}` } })
           )
 
-        const restartRequested = Effect.fnUntraced(function* (worktree: Worktree, service: ServiceNode) {
-          const subscription = yield* PubSub.subscribe(restarts)
+        const restartRequested = (worktree: Worktree, service: ServiceNode) => {
           const key = restartKey(worktree.id, service.name)
 
-          return PubSub.take(subscription).pipe(
-            Effect.repeat({ until: (requested) => requested === key }),
-            Effect.as<Outcome>({ _tag: "RestartRequested" })
+          return PubSub.subscribe(restarts).pipe(
+            Effect.map((subscription) =>
+              PubSub.take(subscription).pipe(
+                Effect.repeat({ until: (requested) => requested === key }),
+                Effect.as<Outcome>({ _tag: "RestartRequested" })
+              )
+            )
           )
-        })
+        }
 
         const recordReady = (worktree: Worktree, service: ServiceNode, since: number) =>
           Clock.currentTimeMillis.pipe(
@@ -361,11 +365,9 @@ export class Supervisor extends Context.Service<
 
           const port = service.exposure._tag === "Routed" ? yield* allocatePort : undefined
           const extraPorts = yield* allocateNamedPorts(service)
-          const spawned = yield* spawnProcess(
-            worktree,
-            service,
-            yield* resolveEnv(worktree, service, { ...(yield* serviceEnv), ...extraPorts }, port)
-          )
+          const declared = yield* serviceEnv
+          const env = yield* resolveEnv(worktree, service, { ...declared, ...extraPorts }, port)
+          const spawned = yield* spawnProcess(worktree, service, env)
           yield* Effect.annotateCurrentSpan({ "forkyard.run": spawned.run.run, "process.pid": spawned.pid })
           yield* setState(worktree, service, { _tag: "Starting", run: spawned.run })
 
@@ -434,7 +436,8 @@ export class Supervisor extends Context.Service<
           ready: Ready,
           moved: Effect.Effect<void>
         ) {
-          const nextChange = Effect.raceFirst(yield* watching(worktree, lifecycle.watch), moved)
+          const changed = yield* watching(worktree, lifecycle.watch)
+          const nextChange = Effect.raceFirst(changed, moved)
           const failed = (cause: Cause.Cause<unknown>) => setState(worktree, service, { _tag: "Failed", reason: reasonOf(cause) })
 
           const attempt = (failures: number): Effect.Effect<void> =>
@@ -450,7 +453,9 @@ export class Supervisor extends Context.Service<
         })
 
         const runToExit = Effect.fnUntraced(function* (worktree: Worktree, service: ServiceNode, serviceEnv: ServiceEnv) {
-          const spawned = yield* spawnProcess(worktree, service, yield* resolveEnv(worktree, service, yield* serviceEnv, undefined))
+          const declared = yield* serviceEnv
+          const env = yield* resolveEnv(worktree, service, declared, undefined)
+          const spawned = yield* spawnProcess(worktree, service, env)
           yield* setState(worktree, service, { _tag: "Starting", run: spawned.run })
 
           return { run: spawned.run, code: yield* spawned.exited } satisfies Finished
@@ -496,7 +501,8 @@ export class Supervisor extends Context.Service<
           ready: Ready,
           moved: Effect.Effect<void>
         ) {
-          const nextChange = Effect.raceFirst(yield* watching(worktree, watch), moved)
+          const changed = yield* watching(worktree, watch)
+          const nextChange = Effect.raceFirst(changed, moved)
 
           return yield* runTaskOnce(worktree, service, serviceEnv, ready).pipe(Effect.andThen(nextChange), Effect.forever)
         })
@@ -536,15 +542,17 @@ export class Supervisor extends Context.Service<
           return apply
         }
 
-        const signalOnChange = Effect.fnUntraced(function* <A>(values: Stream.Stream<A>) {
-          const signals = yield* Queue.sliding<void>(1)
-          yield* values.pipe(
-            Stream.drop(1),
-            Stream.runForEach(() => Queue.offer(signals, undefined)),
-            Effect.forkScoped
+        const signalOnChange = <A>(values: Stream.Stream<A>) =>
+          Queue.sliding<void>(1).pipe(
+            Effect.tap((signals) =>
+              values.pipe(
+                Stream.drop(1),
+                Stream.runForEach(() => Queue.offer(signals, undefined)),
+                Effect.forkScoped
+              )
+            ),
+            Effect.map((signals) => Queue.take(signals).pipe(Effect.asVoid))
           )
-          return Queue.take(signals).pipe(Effect.asVoid)
-        })
 
         const demandShared = (sharedId: WorktreeId, service: ServiceName) => {
           const key = restartKey(sharedId, service)
@@ -573,7 +581,7 @@ export class Supervisor extends Context.Service<
         const followSharedState = (worktree: Worktree, service: ServiceNode, sharedId: WorktreeId, ready: Ready) =>
           status.changes.pipe(
             Stream.map((snapshot) => snapshot[sharedId]?.services[service.name]?.state),
-            Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
+            Stream.changes,
             Stream.runForEach((state) => (state ? mirror(worktree, service, ready)(state) : Effect.void))
           )
 
@@ -654,8 +662,10 @@ export class Supervisor extends Context.Service<
 
         const gitIn = (id: WorktreeId, root: string, ...args: ReadonlyArray<string>) =>
           changes.exec(id, root, git(...args)).pipe(
-            Effect.map((output) => output.trim()),
-            Effect.mapError((error) => new InfraError({ infra: "shared", message: error.message }))
+            Effect.mapBoth({
+              onSuccess: (output) => output.trim(),
+              onFailure: (error) => new InfraError({ infra: "shared", message: error.message })
+            })
           )
 
         const sharedWorktreeOf = (worktree: Worktree): Worktree => {
@@ -688,7 +698,8 @@ export class Supervisor extends Context.Service<
           if (!request) return yield* new InfraError({ infra: "shared", message: `nothing asked for the shared stack ${key}` })
           const sharedRef = request.stack.shared?.ref ?? "origin/main"
           const shared = sharedWorktreeOf(request.worktree)
-          const base = yield* SubscriptionRef.make(yield* ensureCheckout(request.worktree, shared, sharedRef))
+          const checkout = yield* ensureCheckout(request.worktree, shared, sharedRef)
+          const base = yield* SubscriptionRef.make(checkout)
           yield* status.register({
             id: shared.id,
             project: shared.project,
@@ -750,7 +761,7 @@ export class Supervisor extends Context.Service<
           stack: Stack,
           worktree: Worktree,
           mode: "worktree" | "shared"
-        ): Effect.fn.Return<never, unknown, Scope.Scope> {
+        ): Effect.fn.Return<never, ConfigError | PlanError | InfraError, Scope.Scope> {
           yield* Effect.annotateCurrentSpan(worktreeAttributes(worktree))
           const nodes = yield* stack.build(worktree)
           yield* plan(nodes)
@@ -804,16 +815,18 @@ export class Supervisor extends Context.Service<
               ),
               Effect.forkScoped
             )
-            if (stack.inputs)
+            if (stack.inputs) {
+              const session = yield* changes.session(stack.inputs, worktree)
               yield* followChanges(
                 worktree,
-                yield* changes.session(stack.inputs, worktree),
+                session,
                 targetsOf(
                   services,
                   infraNodes.filter((node) => !common.has(node.spec.name))
                 ),
                 shared.base
               )
+            }
           }
 
           const infraMoved = (service: ServiceNode) =>
@@ -838,7 +851,8 @@ export class Supervisor extends Context.Service<
             if (placement === "asleep") return asleep(worktree, service)
             if (placement === "shared" && shared) return useShared(worktree, service, shared, readiness).pipe(Effect.andThen(Effect.never))
             return Effect.gen(function* () {
-              yield* supervise(worktree, service, envOf(service), readiness, yield* infraMoved(service))
+              const moved = yield* infraMoved(service)
+              yield* supervise(worktree, service, envOf(service), readiness, moved)
               return yield* Effect.never
             }).pipe(Effect.scoped)
           }

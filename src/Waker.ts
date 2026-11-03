@@ -74,7 +74,8 @@ export class Waker extends Context.Service<
         const host = hostOf(request.headers["host"])
         if (!(yield* Ref.get(held))[host]) return HttpServerResponse.text(`forkyard serves nothing at ${host}`, { status: 404 })
         yield* wakeIfAsleep(host)
-        return yield* forward(request, yield* awakePort(host))
+        const port = yield* awakePort(host)
+        return yield* forward(request, port)
       })
 
       const handle = HttpServerRequest.HttpServerRequest.pipe(

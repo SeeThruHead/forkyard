@@ -29,7 +29,7 @@ type Options = {
 
 const cloningFilesystems = ["btrfs", "xfs", "zfs", "apfs"]
 
-const urlFor = (port: Port, database: string) => `postgres://postgres@${dockerReach}:${port}/${database}`
+const urlFor = (port: Port, database: string) => dockerReach.pipe(Effect.map((reach) => `postgres://postgres@${reach}:${port}/${database}`))
 
 const majorVersion = (image: string) => Number(/postgres:(\d+)/.exec(image)?.[1] ?? "0")
 
@@ -42,7 +42,7 @@ const dataPath = (image: string) => {
 const variantOf = (image: string) => image.toLowerCase().replace(/[^a-z0-9]+/g, "-")
 
 const onDatabase = <A, E>(port: Port, database: string, effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
-  effect.pipe(Effect.provide(PgClient.layer({ url: Redacted.make(urlFor(port, database)) })))
+  urlFor(port, database).pipe(Effect.flatMap((url) => effect.pipe(Effect.provide(PgClient.layer({ url: Redacted.make(url) })))))
 
 const exists = Effect.fnUntraced(function* (database: string) {
   const sql = yield* SqlClient.SqlClient
@@ -114,9 +114,8 @@ export const docker = (options: Options): InfraSpec => {
       "create golden",
       SqlClient.SqlClient.use((sql) => sql`CREATE DATABASE ${sql(golden)}`)
     )
-    yield* tools
-      .exec({ name: "golden migrate", run: migrate, env: { DATABASE_URL: urlFor(serverPort, golden) }, cwd: worktree.root })
-      .pipe(Effect.scoped)
+    const url = yield* urlFor(serverPort, golden)
+    yield* tools.exec({ name: "golden migrate", run: migrate, env: { DATABASE_URL: url }, cwd: worktree.root }).pipe(Effect.scoped)
   })
 
   const snapshotGolden = Effect.fn("Postgres.snapshotGolden")(function* (serverPort: Port, golden: string, source: string) {
@@ -206,8 +205,9 @@ export const docker = (options: Options): InfraSpec => {
   const start = Effect.fn("Postgres.start")(function* (instance: string, tools: InfraTools) {
     if (copy === "clone" && !canClone) return yield* fail(`copy "clone" needs Postgres 18 or newer, and the image is ${image}`)
 
-    const container = containerName(name, instance)
+    const container = yield* containerName(name, instance)
     const hostPort = yield* port(name)
+    const published = yield* publish(hostPort, 5432)
     const cloneFlags = copy === "clone" ? ["-c", "file_copy_method=clone"] : []
     yield* Effect.annotateCurrentSpan({
       "db.system.name": "postgresql",
@@ -220,7 +220,7 @@ export const docker = (options: Options): InfraSpec => {
       name: container,
       args: [
         "-p",
-        publish(hostPort, 5432),
+        published,
         "-e",
         "POSTGRES_HOST_AUTH_METHOD=trust",
         "-v",
@@ -257,8 +257,9 @@ export const docker = (options: Options): InfraSpec => {
     const created = yield* server.exclusive(ensureDatabase(serverPort, database, template))
     yield* Effect.annotateCurrentSpan({ "forkyard.db.created": created })
 
-    const url = urlFor(serverPort, database)
-    return options.env?.({ url, database, host: dockerReach, port: serverPort }) ?? { DATABASE_URL: url }
+    const url = yield* urlFor(serverPort, database)
+    const host = yield* dockerReach
+    return options.env?.({ url, database, host, port: serverPort }) ?? { DATABASE_URL: url }
   })
 
   const refreshGolden = Effect.fn("Postgres.refreshGolden")(function* (server: InfraServer, worktree: Worktree, tools: InfraTools) {
