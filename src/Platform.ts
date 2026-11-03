@@ -2,4 +2,11 @@ import { NodeCrypto, NodeFileSystem, NodePath, NodeStdio, NodeTerminal } from "@
 import { Layer } from "effect"
 import * as Os from "./platform/Os.ts"
 
-export const layer = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer, NodeCrypto.layer, NodeStdio.layer, NodeTerminal.layer, Os.layer)
+export const layer = Layer.mergeAll(
+  NodeFileSystem.layer,
+  NodePath.layer,
+  NodeCrypto.layerSecureRandom,
+  NodeStdio.layer,
+  NodeTerminal.layer,
+  Os.layer
+)

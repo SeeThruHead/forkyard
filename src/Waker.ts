@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node"
 import { Cause, Context, Effect, Layer, Ref, Schedule, type Scope } from "effect"
-import { HttpBody, HttpClient, HttpClientRequest, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
+import { HttpBody, HttpClient, HttpClientRequest, HttpMethod, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { createServer } from "node:http"
 import { Port } from "./Ids.ts"
 import { Router } from "./Router.ts"
@@ -45,11 +45,16 @@ export class Waker extends Context.Service<
         )
 
       const forward = (request: HttpServerRequest.HttpServerRequest, target: Port) =>
+        HttpMethod.isHttpMethod(request.method)
+          ? send(request.method, request, target)
+          : Effect.succeed(HttpServerResponse.text(`forkyard cannot forward ${request.method}`, { status: 405 }))
+
+      const send = (method: HttpMethod.HttpMethod, request: HttpServerRequest.HttpServerRequest, target: Port) =>
         http
           .execute(
-            HttpClientRequest.make(request.method)(`http://127.0.0.1:${target}${request.url}`, {
+            HttpClientRequest.make(method)(`http://127.0.0.1:${target}${request.url}`, {
               headers: forwardable(request.headers),
-              ...(hasBody(request.method) ? { body: HttpBody.stream(request.stream) } : {})
+              ...(hasBody(method) ? { body: HttpBody.stream(request.stream) } : {})
             })
           )
           .pipe(
