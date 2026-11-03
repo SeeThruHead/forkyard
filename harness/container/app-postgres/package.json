@@ -6,7 +6,7 @@
     "pg": "^8.16.0"
   },
   "devDependencies": {
-    "effect": "4.0.5",
+    "effect": "4.1.2",
     "forkyard": "file:/tmp/forkyard.tgz"
   }
 }

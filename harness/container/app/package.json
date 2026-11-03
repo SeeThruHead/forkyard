@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "devDependencies": {
-    "effect": "4.0.5",
+    "effect": "4.1.2",
     "forkyard": "file:/tmp/forkyard.tgz"
   }
 }
