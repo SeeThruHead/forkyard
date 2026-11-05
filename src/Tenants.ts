@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, FileSystem, Layer, Ref, Schema, type Scope } from "effect"
+import { Clock, Context, Effect, Layer, Ref, Schema, type Scope } from "effect"
 import { SqlClient } from "effect/sql"
 import { AbsolutePath, BranchSlug, type InfraName, Port, ProjectName, WorktreeId } from "./Ids.ts"
 import { reapable } from "./infra/Reaping.ts"
@@ -45,7 +45,6 @@ export class Tenants extends Context.Service<
     Tenants,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
-      const fs = yield* FileSystem.FileSystem
       const live = yield* Ref.make<Readonly<Record<string, number>>>({})
 
       const stamp = (infra: InfraName, instance: string, tenant: Worktree) =>
@@ -73,9 +72,6 @@ export class Tenants extends Context.Service<
           Effect.orDie
         )
 
-      const existingRoots = (roots: ReadonlyArray<string>) =>
-        Effect.filter(roots, (root) => fs.exists(root).pipe(Effect.orElseSucceed(() => false))).pipe(Effect.map((found) => new Set(found)))
-
       const liveTenants = (infra: InfraName, instance: string) =>
         Ref.get(live).pipe(
           Effect.map(
@@ -92,13 +88,7 @@ export class Tenants extends Context.Service<
         const rows = yield* rowsOf(infra, instance)
         const usages = rows.map((row) => ({ tenant: row.tenant, root: row.root, lastUsed: row.last_used }))
         const now = yield* Clock.currentTimeMillis
-        const doomed = reapable(
-          usages,
-          yield* liveTenants(infra, instance),
-          yield* existingRoots([...new Set(rows.map((row) => row.root))]),
-          now,
-          graceMillis
-        )
+        const doomed = reapable(usages, yield* liveTenants(infra, instance), now, graceMillis)
         return yield* Effect.forEach(doomed, (tenant) =>
           decodeWorktree(rows.find((row) => row.tenant === tenant)?.worktree ?? "").pipe(Effect.orDie)
         )

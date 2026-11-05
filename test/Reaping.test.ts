@@ -8,22 +8,26 @@ const grace = 7 * day
 const used = (tenant: string, root: string, daysAgo: number): Usage => ({ tenant, root, lastUsed: now - daysAgo * day })
 
 describe("tenant reaping", () => {
-  it("drops old tenants nobody uses, and keeps each existing worktree's latest one", () => {
+  it("drops every tenant nobody used within the grace period", () => {
     const usages = [
       used("shared-aaaa.shop", "/code/shop", 30),
       used("shared-bbbb.shop", "/code/shop", 20),
       used("shared-cccc.shop", "/wt/gone", 10),
       used("shared-dddd.shop", "/wt/gone", 1)
     ]
-    expect(reapable(usages, new Set(), new Set(["/code/shop"]), now, grace)).toEqual(["shared-aaaa.shop", "shared-cccc.shop"])
+    expect(reapable(usages, new Set(), now, grace)).toEqual(["shared-aaaa.shop", "shared-bbbb.shop", "shared-cccc.shop"])
+  })
+
+  it("drops an idle tenant even when its worktree still exists", () => {
+    expect(reapable([used("shared-aaaa.shop", "/code/shop", 8)], new Set(), now, grace)).toEqual(["shared-aaaa.shop"])
   })
 
   it("a tenant counts as used when any worktree used it recently", () => {
     const usages = [used("shared-aaaa.shop", "/wt/gone", 30), used("shared-aaaa.shop", "/wt/other-gone", 2)]
-    expect(reapable(usages, new Set(), new Set(), now, grace)).toEqual([])
+    expect(reapable(usages, new Set(), now, grace)).toEqual([])
   })
 
   it("never drops a tenant that is leased right now", () => {
-    expect(reapable([used("shared-aaaa.shop", "/wt/gone", 30)], new Set(["shared-aaaa.shop"]), new Set(), now, grace)).toEqual([])
+    expect(reapable([used("shared-aaaa.shop", "/wt/gone", 30)], new Set(["shared-aaaa.shop"]), now, grace)).toEqual([])
   })
 })
