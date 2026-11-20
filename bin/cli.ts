@@ -7,6 +7,7 @@ import { AbsolutePath, InfraName, ownerOfWorktree, ServiceName, type WorktreeId 
 import { defaultHome, runDaemon } from "../src/main-daemon.ts"
 import { packageVersion, protocolVersion } from "../src/Package.ts"
 import { layer as osLayer, Os, unsupportedHere } from "../src/platform/Os.ts"
+import { findStackFile, stackFileLocations } from "../src/StackFile.ts"
 import type { View } from "../tui/View.ts"
 import * as Service from "./service.ts"
 import { type EnvVar, isSettled, runOf, serviceUrl, type Snapshot, stateDetail, viewLabel, type WorktreeView } from "../src/Model.ts"
@@ -39,8 +40,8 @@ const findRoot = Effect.fn("findRoot")(function* (dir: string): Effect.fn.Return
   const path = yield* Path.Path
   const parent = path.dirname(dir)
 
-  if (yield* fs.exists(path.join(dir, "forkyard.config.ts")).pipe(Effect.orElseSucceed(() => false))) return AbsolutePath.make(dir)
-  if (parent === dir) return yield* Effect.fail("no forkyard.config.ts in this directory or any parent")
+  if (Option.isSome(yield* findStackFile(fs, path, dir))) return AbsolutePath.make(dir)
+  if (parent === dir) return yield* Effect.fail(`no ${stackFileLocations.join(" or ")} in this directory or any parent`)
   return yield* findRoot(parent)
 })
 

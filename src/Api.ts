@@ -1,4 +1,4 @@
-import { Effect, Path, Record, Stream } from "effect"
+import { Effect, FileSystem, Option, Path, Record, Stream } from "effect"
 import { DaemonLog } from "./DaemonLog.ts"
 import { cliPath, packageVersion, protocolVersion } from "./Package.ts"
 import { Upgrade } from "./Upgrade.ts"
@@ -9,6 +9,7 @@ import { InfraManager } from "./InfraManager.ts"
 import { ForkyardError, ForkyardRpcs } from "./Protocol.ts"
 import { Router } from "./Router.ts"
 import { Runs } from "./Runs.ts"
+import { findStackFile } from "./StackFile.ts"
 import { Status } from "./Status.ts"
 import { Supervisor } from "./Supervisor.ts"
 import { Worktrees } from "./Worktrees.ts"
@@ -24,6 +25,7 @@ export const layer = (options: { readonly dashboardUrl: string }) =>
       const infra = yield* InfraManager
       const env = yield* EnvResolver
       const path = yield* Path.Path
+      const fs = yield* FileSystem.FileSystem
       const daemonLog = yield* DaemonLog
       const usage = yield* ProcessUsage
       const upgrade = yield* Upgrade
@@ -49,16 +51,17 @@ export const layer = (options: { readonly dashboardUrl: string }) =>
         return report
       })
 
+      const stackFileOf = (root: AbsolutePath) =>
+        findStackFile(fs, path, root).pipe(Effect.map(Option.getOrElse(() => AbsolutePath.make(path.join(root, "forkyard.config.ts")))))
+
+      const up = Effect.fn("Api.up")(function* (root: AbsolutePath, branch: string, profile: string, requested: AbsolutePath | undefined) {
+        const stackFile = requested ?? (yield* stackFileOf(root))
+        const id = yield* worktrees.up({ root, branch, profile, stackFile })
+        return { id }
+      })
+
       return ForkyardRpcs.of({
-        Up: ({ root, branch, profile, stackFile }) =>
-          worktrees
-            .up({
-              root,
-              branch,
-              profile: profile ?? "default",
-              stackFile: stackFile ?? AbsolutePath.make(path.join(root, "forkyard.config.ts"))
-            })
-            .pipe(Effect.map((id) => ({ id }))),
+        Up: ({ root, branch, profile, stackFile }) => up(root, branch, profile ?? "default", stackFile),
         Down: ({ id }) => worktrees.down(id),
         Status: () => status.changes,
         Logs: ({ id }) => status.logs.pipe(Stream.filter((line) => line.owner === ownerOfWorktree(id))),
