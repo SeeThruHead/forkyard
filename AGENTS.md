@@ -14,10 +14,10 @@ macOS and Linux. Windows is supported through WSL, which is Linux; native Window
 
 ## How forkyard starts
 
-Forkyard runs on Node 24+ or Bun. Each repo installs it as a dev dependency next to `effect`, and that copy is the one that runs, so a repo always runs the version it pinned. The global command is a stub, like `eslint` or `gulp-cli`.
+Forkyard runs on Node 24+ or Bun. One npm package, `forkyard`, is both the global command (`npm i -g forkyard`) and the dev dependency a repo pins next to `effect`. Inside a repo the pinned copy is the one that runs, so a repo always runs the version it pinned.
 
-1. `cli/forkyard` (the `forkyard-cli` package) is the only thing installed globally. It finds the nearest `node_modules/forkyard` above the current folder and runs that copy's launcher. Outside a repo with forkyard installed it stops and says so. It does nothing else, so it never needs updating.
-2. `launcher/forkyard` is the package's command. In a source checkout (a `.git` folder, as when a repo links to a clone of forkyard) it runs `bin/forkyard`, the TypeScript source. Otherwise it picks the runtime in `pick_runtime`: `FORKYARD_RUNTIME` if set, Bun if forkyard was installed with `bun add -g`, otherwise Node 24+, and Bun only when there is no Node.
+1. `launcher/forkyard` is the package's command. It first hands off: walking up from the current folder, it looks in each folder for `node_modules/forkyard` and then `tools/forkyard/node_modules/forkyard` (where some repos pin it). If it finds a copy that is not itself, it runs that copy's launcher with `FORKYARD_HANDED_OFF=1`, and a launcher started that way never hands off again, so there is no loop whatever version the pinned copy is. With no pinned copy it runs itself.
+2. After the handoff, in a source checkout (a `.git` folder, as when a repo links to a clone of forkyard) it runs `bin/forkyard`, the TypeScript source. Otherwise it picks the runtime in `pick_runtime`: `FORKYARD_RUNTIME` if set, Bun if forkyard was installed with `bun add -g`, otherwise Node 24+, and Bun only when there is no Node.
 3. `bin/cli.ts` is the CLI.
 
 A config imports `forkyard` and `effect` from its repo's `node_modules`, like any other package; the daemon loads it with a plain `import()`. Two things differ by runtime: the SQLite driver in `src/Database.ts` (chosen by `src/platform/Runtime.ts`), and restarting a foreground daemon after an upgrade in `src/platform/Os.ts`, which replaces the process on Node and runs a fresh one on Bun, which has no `execve`.

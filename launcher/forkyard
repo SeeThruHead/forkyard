@@ -2,6 +2,36 @@
 self="$(realpath "$0")"
 root="$(dirname "$self")/.."
 entry="$root/dist/bin/forkyard.js"
+handed_off="${FORKYARD_HANDED_OFF:-}"
+unset FORKYARD_HANDED_OFF
+
+pinned_in() {
+  for candidate in "$1/node_modules/forkyard/launcher/forkyard" "$1/tools/forkyard/node_modules/forkyard/launcher/forkyard"; do
+    if [ -x "$candidate" ]; then
+      realpath "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+find_pinned() {
+  dir="$PWD"
+  while :; do
+    if pinned_in "$dir"; then return 0; fi
+    [ "$dir" = "/" ] && return 1
+    dir="$(dirname "$dir")"
+  done
+}
+
+hand_off_to_pinned() {
+  [ -n "$handed_off" ] && return
+  pinned="$(find_pinned)" || return
+  [ "$pinned" = "$self" ] && return
+  FORKYARD_HANDED_OFF=1 exec "$pinned" "$@"
+}
+
+hand_off_to_pinned "$@"
 
 if [ -d "$root/.git" ]; then exec "$root/bin/forkyard" "$@"; fi
 

@@ -2,7 +2,21 @@
   "name": "forkyard",
   "version": "0.1.0",
   "description": "Run many worktrees of the same stack side by side, each at its own URLs, from one daemon.",
+  "keywords": [
+    "dev-environment",
+    "effect",
+    "git-worktree",
+    "monorepo",
+    "worktree"
+  ],
+  "homepage": "https://github.com/SeeThruHead/forkyard#readme",
+  "bugs": "https://github.com/SeeThruHead/forkyard/issues",
   "license": "MIT",
+  "author": "Shane Keulen",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SeeThruHead/forkyard.git"
+  },
   "bin": {
     "forkyard": "launcher/forkyard"
   },
@@ -51,6 +65,7 @@
   "dependencies": {
     "@effect/atom-react": "4.0.5",
     "@effect/platform-node": "4.0.5",
+    "@effect/platform-node-shared": "4.0.5",
     "@effect/sql-pg": "4.0.5",
     "@effect/sql-sqlite-bun": "4.0.5",
     "@effect/sql-sqlite-node": "4.0.5",
@@ -73,7 +88,7 @@
     "vitest": "^5.0.5"
   },
   "peerDependencies": {
-    "effect": "^4.0.5"
+    "effect": "~4.0.5"
   },
   "engines": {
     "node": ">=24"
