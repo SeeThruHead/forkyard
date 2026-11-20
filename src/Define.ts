@@ -40,11 +40,16 @@ const referenceServices = (names: ReadonlyArray<string>) =>
     Effect.map((entries): Readonly<Record<string, ServiceRef>> => Object.fromEntries(entries))
   )
 
-const shapeOf = <Names extends string, InfraNames extends string>(def: ServiceDef<Names, InfraNames>) => {
+const readinessOf = <Names extends string, InfraNames extends string>(def: ServiceDef<Names, InfraNames>) => {
   if (def.kind === "http") return { route: true, ready: "healthy" as const }
   if (def.kind === "worker") return { ready: "started" as const }
-  return { ready: "exited" as const, ...(def.watch ? { watch: def.watch } : {}) }
+  return { ready: "exited" as const }
 }
+
+const shapeOf = <Names extends string, InfraNames extends string>(def: ServiceDef<Names, InfraNames>) => ({
+  ...readinessOf(def),
+  ...(def.watch ? { watch: def.watch } : {})
+})
 
 export const defineStack = <const InfraNames extends string, const Names extends string>(
   definition: Definition<InfraNames, Names>
