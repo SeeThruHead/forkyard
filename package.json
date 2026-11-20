@@ -35,7 +35,7 @@
     "test": "vitest run",
     "daemon": "node --conditions=forkyard-source --no-warnings src/main-daemon.ts",
     "forkyard": "node --conditions=forkyard-source --no-warnings bin/forkyard.ts",
-    "build:dashboard": "bun build dashboard/src/main.tsx --outdir dashboard/dist --target browser --minify && cp dashboard/index.html dashboard/dist/index.html",
+    "build:dashboard": "sh tools/build-dashboard.sh",
     "tour": "node --conditions=forkyard-source --no-warnings harness/tour.ts",
     "golden-demo": "node --conditions=forkyard-source --no-warnings harness/golden-demo.ts",
     "lint": "oxlint",
@@ -43,7 +43,7 @@
     "format:check": "oxfmt --check",
     "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test",
     "lint:fixtures": "oxlint -c test/lint/fixtures.oxlintrc.json test/lint/fixtures",
-    "prepare": "lefthook install",
+    "prepare": "[ -e .git ] || exit 0; lefthook install",
     "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc -p tsconfig.types.json && pnpm run build:dashboard",
     "prepack": "pnpm run build",
     "test:container": "harness/container/run.sh"
