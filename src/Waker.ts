@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node"
 import { Cause, Context, Effect, Layer, Ref, Schedule, type Scope } from "effect"
-import { HttpBody, HttpClient, HttpClientRequest, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
+import { HttpBody, HttpClient, HttpClientRequest, HttpMethod, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { createServer } from "node:http"
 import { Port } from "./Ids.ts"
 import { Router } from "./Router.ts"
@@ -13,6 +13,10 @@ const forwardable = (headers: Readonly<Record<string, string>>) =>
 const hostOf = (header: string | undefined) => (header ?? "").split(":")[0] ?? ""
 
 const hasBody = (method: string) => method !== "GET" && method !== "HEAD"
+
+const knownMethods: ReadonlySet<string> = HttpMethod.all
+
+const isKnownMethod = (method: string): method is HttpMethod.HttpMethod => knownMethods.has(method)
 
 const without = <A>(all: Readonly<Record<string, A>>, host: string) =>
   Object.fromEntries(Object.entries(all).filter(([key]) => key !== host))
@@ -44,10 +48,10 @@ export class Waker extends Context.Service<
           Effect.timeout("3 minutes")
         )
 
-      const forward = (request: HttpServerRequest.HttpServerRequest, target: Port) =>
+      const forward = (request: HttpServerRequest.HttpServerRequest, method: HttpMethod.HttpMethod, target: Port) =>
         http
           .execute(
-            HttpClientRequest.make(request.method)(`http://127.0.0.1:${target}${request.url}`, {
+            HttpClientRequest.make(method)(`http://127.0.0.1:${target}${request.url}`, {
               headers: forwardable(request.headers),
               ...(hasBody(request.method) ? { body: HttpBody.stream(request.stream) } : {})
             })
@@ -68,8 +72,10 @@ export class Waker extends Context.Service<
       const holdAndForward = Effect.fn("Waker.holdAndForward")(function* (request: HttpServerRequest.HttpServerRequest) {
         const host = hostOf(request.headers["host"])
         if (!(yield* Ref.get(held))[host]) return HttpServerResponse.text(`forkyard serves nothing at ${host}`, { status: 404 })
+        const method = request.method
+        if (!isKnownMethod(method)) return HttpServerResponse.text(`forkyard cannot forward ${method} requests`, { status: 405 })
         yield* wakeIfAsleep(host)
-        return yield* forward(request, yield* awakePort(host))
+        return yield* forward(request, method, yield* awakePort(host))
       })
 
       const handle = HttpServerRequest.HttpServerRequest.pipe(

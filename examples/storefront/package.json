@@ -8,7 +8,7 @@
     "status": "forkyard status"
   },
   "devDependencies": {
-    "effect": "4.0.5",
+    "effect": "4.1.5",
     "forkyard": "link:../..",
     "varlock": "1.23.0"
   },

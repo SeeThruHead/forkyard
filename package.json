@@ -22,6 +22,7 @@
   },
   "files": [
     "README.md",
+    "docs/agents.md",
     "dashboard/dist",
     "dist",
     "launcher"
@@ -63,22 +64,22 @@
     "test:container": "harness/container/run.sh"
   },
   "dependencies": {
-    "@effect/atom-react": "4.0.5",
-    "@effect/platform-node": "4.0.5",
-    "@effect/platform-node-shared": "4.0.5",
-    "@effect/sql-pg": "4.0.5",
-    "@effect/sql-sqlite-bun": "4.0.5",
-    "@effect/sql-sqlite-node": "4.0.5",
+    "@effect/atom-react": "4.1.5",
+    "@effect/platform-node": "4.1.5",
+    "@effect/platform-node-shared": "4.1.5",
+    "@effect/sql-pg": "4.1.5",
+    "@effect/sql-sqlite-bun": "4.1.5",
+    "@effect/sql-sqlite-node": "4.1.5",
     "ink": "8.0.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@effect/vitest": "4.0.5",
+    "@effect/vitest": "4.1.5",
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "effect": "4.0.5",
+    "effect": "4.1.5",
     "lefthook": "2.2.2",
     "oxfmt": "0.73.0",
     "oxlint": "1.88.0",
@@ -88,7 +89,7 @@
     "vitest": "^5.0.5"
   },
   "peerDependencies": {
-    "effect": "~4.0.5"
+    "effect": "~4.1.5"
   },
   "engines": {
     "node": ">=24"

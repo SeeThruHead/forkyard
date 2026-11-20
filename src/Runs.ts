@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, Layer, Schema, type Scope } from "effect"
+import { Array, Clock, Context, Effect, Layer, Schema, type Scope } from "effect"
 import { SqlClient } from "effect/sql"
 import { Pid, ProcessOwner, RunId, RunNumber } from "./Ids.ts"
 import type { RunInfo, RunLine } from "./Model.ts"
@@ -90,9 +90,9 @@ export class Runs extends Context.Service<
       const toRow = (line: RunLine) => ({ run_id: line.runId, seq: line.seq, at: line.at, line: line.line })
 
       const append = (lines: ReadonlyArray<RunLine>) =>
-        lines.length === 0
-          ? Effect.void
-          : sql`INSERT OR IGNORE INTO log_lines ${sql.insert(lines.map(toRow))}`.pipe(Effect.asVoid, Effect.orDie)
+        Array.isReadonlyArrayNonEmpty(lines)
+          ? sql`INSERT OR IGNORE INTO log_lines ${sql.insert(Array.map(lines, toRow))}`.pipe(Effect.asVoid, Effect.orDie)
+          : Effect.void
 
       const list = (owner: ProcessOwner, service: string) =>
         sql`SELECT * FROM runs WHERE worktree = ${owner} AND service = ${service} ORDER BY n DESC LIMIT 50`.pipe(

@@ -1,4 +1,5 @@
-import { Clock, Context, Crypto, Effect, FileSystem, Layer, Schema, type Scope } from "effect"
+import { Clock, Context, Effect, FileSystem, Layer, Schema, type Scope } from "effect"
+import { SecureRandom } from "effect/crypto"
 import { SqlClient } from "effect/sql"
 import { Os } from "./platform/Os.ts"
 import { uptime } from "node:os"
@@ -59,8 +60,8 @@ export class Registry extends Context.Service<
       const sql = yield* SqlClient.SqlClient
       const fs = yield* FileSystem.FileSystem
       const os = yield* Os
-      const crypto = yield* Crypto.Crypto
-      const identity: Identity = { daemonId: yield* crypto.randomUUIDv4().pipe(Effect.orDie), bootMinute: yield* bootMinute }
+      const random = yield* SecureRandom.SecureRandom
+      const identity: Identity = { daemonId: yield* random.uuidV4(), bootMinute: yield* bootMinute }
 
       const previousProcesses = sql`SELECT pid, daemon_id, boot_minute, started_at FROM processes`.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ProcessRow))),
