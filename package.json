@@ -1,6 +1,6 @@
 {
   "name": "forkyard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Run many worktrees of the same stack side by side, each at its own URLs, from one daemon.",
   "keywords": [
     "dev-environment",
