@@ -3,7 +3,6 @@ import {
   Clock,
   Config,
   Context,
-  Deferred,
   Duration,
   Effect,
   FileSystem,
@@ -63,9 +62,18 @@ export class DependencyFailed extends Schema.TaggedError<DependencyFailed>()("De
   service: Schema.String
 }) {}
 
-type Ready = Deferred.Deferred<void, DependencyFailed>
+type ReadyState = "waiting" | "ready" | "failed"
+
+type Ready = SubscriptionRef.SubscriptionRef<ReadyState>
 
 type Readiness = Readonly<Record<string, Ready>>
+
+const signalReady = (ready: Ready) => SubscriptionRef.set(ready, "ready")
+
+const signalFailed = (ready: Ready) => SubscriptionRef.set(ready, "failed")
+
+const firstWhere = (ready: Ready, wanted: (state: ReadyState) => boolean) =>
+  SubscriptionRef.changes(ready).pipe(Stream.filter(wanted), Stream.runHead, Effect.map(Option.getOrElse((): ReadyState => "waiting")))
 
 type ServiceEnv = Effect.Effect<OwnedEnv, InfraError, Scope.Scope>
 
@@ -308,11 +316,19 @@ export class Supervisor extends Context.Service<
 
         const readinessOf = (services: ReadonlyArray<ServiceNode>) =>
           Effect.forEach(services, (service) =>
-            Deferred.make<void, DependencyFailed>().pipe(Effect.map((ready) => [service.name, ready] as const))
+            SubscriptionRef.make<ReadyState>("waiting").pipe(Effect.map((ready) => [service.name, ready] as const))
           ).pipe(Effect.map((entries): Readiness => Object.fromEntries(entries)))
 
+        const awaitDependency = Effect.fnUntraced(function* (readiness: Readiness, name: string) {
+          const state = yield* firstWhere(readiness[name]!, (current) => current !== "waiting")
+          if (state === "failed") return yield* new DependencyFailed({ service: name })
+        })
+
         const awaitDependencies = (service: ServiceNode, readiness: Readiness) =>
-          Effect.forEach(service.after, (name) => Deferred.await(readiness[name]!), { discard: true })
+          Effect.forEach(service.after, (name) => awaitDependency(readiness, name), { discard: true })
+
+        const untilDependenciesRecover = (service: ServiceNode, readiness: Readiness) =>
+          Effect.forEach(service.after, (name) => firstWhere(readiness[name]!, (state) => state === "ready"), { discard: true })
 
         const spawnProcess = (worktree: Worktree, service: ServiceNode, serviceEnv: Readonly<Record<string, string>>) =>
           proc.spawn({
@@ -379,7 +395,7 @@ export class Supervisor extends Context.Service<
 
         const markReady = Effect.fnUntraced(function* (worktree: Worktree, service: ServiceNode, run: RunRef, ready: Ready, since: number) {
           yield* setState(worktree, service, { _tag: "Ready", run })
-          yield* Deferred.succeed(ready, undefined)
+          yield* signalReady(ready)
           yield* recordReady(worktree, service, since)
         })
 
@@ -472,21 +488,27 @@ export class Supervisor extends Context.Service<
 
         const recordFinished = (worktree: Worktree, service: ServiceNode, ready: Ready) => (finished: Finished) => {
           if (finished.code === 0) {
-            return Effect.all([setState(worktree, service, { _tag: "Done", run: finished.run }), Deferred.succeed(ready, undefined)], {
-              discard: true
-            })
+            return Effect.all([setState(worktree, service, { _tag: "Done", run: finished.run }), signalReady(ready)], { discard: true })
           }
           return Effect.all(
             [
               setState(worktree, service, { _tag: "Failed", reason: `exited with ${finished.code}`, run: finished.run }),
-              Deferred.fail(ready, new DependencyFailed({ service: service.name }))
+              signalFailed(ready)
             ],
             { discard: true }
           )
         }
 
+        const recordStartFailure = (worktree: Worktree, service: ServiceNode, ready: Ready) => (cause: Cause.Cause<unknown>) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.all([setState(worktree, service, { _tag: "Failed", reason: reasonOf(cause) }), signalFailed(ready)], { discard: true })
+
         const runTaskOnce = (worktree: Worktree, service: ServiceNode, serviceEnv: ServiceEnv, ready: Ready) =>
-          runOnce(worktree, service, serviceEnv).pipe(Effect.flatMap(recordFinished(worktree, service, ready)))
+          runOnce(worktree, service, serviceEnv).pipe(
+            Effect.flatMap(recordFinished(worktree, service, ready)),
+            Effect.catchCause(recordStartFailure(worktree, service, ready))
+          )
 
         const runTask = Effect.fnUntraced(function* (
           worktree: Worktree,
@@ -503,36 +525,54 @@ export class Supervisor extends Context.Service<
 
         const failDependents = (worktree: Worktree, service: ServiceNode, readiness: Readiness) => (failed: DependencyFailed) =>
           Effect.all(
-            [
-              setState(worktree, service, { _tag: "Failed", reason: `${failed.service} failed` }),
-              Deferred.fail(readiness[service.name]!, new DependencyFailed({ service: service.name }))
-            ],
-            { discard: true }
+            [setState(worktree, service, { _tag: "Failed", reason: `${failed.service} failed` }), signalFailed(readiness[service.name]!)],
+            {
+              discard: true
+            }
           )
 
-        const supervise = Effect.fnUntraced(
-          function* (worktree: Worktree, service: ServiceNode, serviceEnv: ServiceEnv, readiness: Readiness, moved: Effect.Effect<void>) {
-            const ready = readiness[service.name]!
+        const superviseOnce = Effect.fnUntraced(function* (
+          worktree: Worktree,
+          service: ServiceNode,
+          serviceEnv: ServiceEnv,
+          readiness: Readiness,
+          moved: Effect.Effect<void>
+        ): Effect.fn.Return<void, DependencyFailed, Scope.Scope> {
+          const ready = readiness[service.name]!
 
-            yield* status.service(worktree.id, service.name, viewOf(worktree, service, { _tag: "Waiting" }))
-            yield* awaitDependencies(service, readiness)
+          yield* status.service(worktree.id, service.name, viewOf(worktree, service, { _tag: "Waiting" }))
+          yield* awaitDependencies(service, readiness)
 
-            if (service.lifecycle._tag === "RunOnce")
-              return yield* runTask(worktree, service, service.lifecycle.watch, serviceEnv, ready, moved)
-            return yield* keepRunning(worktree, service, service.lifecycle, serviceEnv, ready, moved)
-          },
-          (effect, worktree, service, _serviceEnv, readiness) =>
-            effect.pipe(
-              Effect.catchTag("DependencyFailed", failDependents(worktree, service, readiness)),
-              Effect.catchCause((cause) => setState(worktree, service, { _tag: "Failed", reason: reasonOf(cause) }))
-            )
-        )
+          if (service.lifecycle._tag === "RunOnce")
+            return yield* runTask(worktree, service, service.lifecycle.watch, serviceEnv, ready, moved)
+          return yield* keepRunning(worktree, service, service.lifecycle, serviceEnv, ready, moved)
+        })
+
+        const supervise = (
+          worktree: Worktree,
+          service: ServiceNode,
+          serviceEnv: ServiceEnv,
+          readiness: Readiness,
+          moved: Effect.Effect<void>
+        ): Effect.Effect<void, never, Scope.Scope> =>
+          superviseOnce(worktree, service, serviceEnv, readiness, moved).pipe(
+            Effect.catchTag("DependencyFailed", (failed) =>
+              failDependents(
+                worktree,
+                service,
+                readiness
+              )(failed).pipe(
+                Effect.andThen(untilDependenciesRecover(service, readiness)),
+                Effect.andThen(Effect.suspend(() => supervise(worktree, service, serviceEnv, readiness, moved)))
+              )
+            ),
+            Effect.catchCause((cause) => setState(worktree, service, { _tag: "Failed", reason: reasonOf(cause) }))
+          )
 
         const mirror = (worktree: Worktree, service: ServiceNode, ready: Ready) => (state: ServiceState) => {
           const apply = setState(worktree, service, state)
-          if (state._tag === "Ready" || state._tag === "Done") return apply.pipe(Effect.andThen(Deferred.succeed(ready, undefined)))
-          if (state._tag === "Failed")
-            return apply.pipe(Effect.andThen(Deferred.fail(ready, new DependencyFailed({ service: service.name }))))
+          if (state._tag === "Ready" || state._tag === "Done") return apply.pipe(Effect.andThen(signalReady(ready)))
+          if (state._tag === "Failed") return apply.pipe(Effect.andThen(signalFailed(ready)))
           return apply
         }
 
@@ -671,15 +711,25 @@ export class Supervisor extends Context.Service<
         }
 
         const cloneShared = Effect.fn("Supervisor.cloneShared")(function* (origin: Worktree, shared: Worktree, ref: string) {
+          const partial = `${shared.root}.partial`
           yield* fs.makeDirectory(options.sharedDir, { recursive: true }).pipe(Effect.orDie)
-          yield* gitIn(origin.id, options.sharedDir, "clone", "--quiet", "--shared", "--no-checkout", origin.root, shared.root)
+          yield* fs.remove(partial, { recursive: true, force: true }).pipe(Effect.orDie)
+          yield* fs.remove(shared.root, { recursive: true, force: true }).pipe(Effect.orDie)
+          yield* gitIn(origin.id, options.sharedDir, "clone", "--quiet", "--shared", "--no-checkout", origin.root, partial)
           const commit = yield* gitIn(origin.id, origin.root, "rev-parse", ref)
-          yield* gitIn(origin.id, shared.root, "checkout", "--quiet", "--detach", "--force", commit)
+          yield* gitIn(origin.id, partial, "checkout", "--quiet", "--detach", "--force", commit)
+          yield* fs.rename(partial, shared.root).pipe(Effect.orDie)
         })
 
         const ensureCheckout = Effect.fn("Supervisor.ensureCheckout")(function* (origin: Worktree, shared: Worktree, ref: string) {
           const present = yield* fs.exists(path.join(shared.root, ".git")).pipe(Effect.orElseSucceed(() => false))
-          if (!present) yield* cloneShared(origin, shared, ref)
+          const complete = present
+            ? yield* gitIn(origin.id, shared.root, "diff", "--cached", "--quiet", "HEAD").pipe(
+                Effect.as(true),
+                Effect.orElseSucceed(() => false)
+              )
+            : false
+          if (!complete) yield* cloneShared(origin, shared, ref)
           return yield* gitIn(origin.id, shared.root, "rev-parse", "HEAD")
         })
 
@@ -744,6 +794,11 @@ export class Supervisor extends Context.Service<
             Effect.provideService(Path.Path, path)
           )
           yield* next.pipe(Effect.andThen(refresh), Effect.forever, Effect.forkScoped)
+          yield* SubscriptionRef.changes(base).pipe(
+            Stream.drop(1),
+            Stream.runForEach(() => refresh),
+            Effect.forkScoped
+          )
         })
 
         const runStack = Effect.fnUntraced(function* (
