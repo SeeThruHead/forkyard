@@ -1,9 +1,24 @@
 import { NodeChildProcessSpawner } from "@effect/platform-node"
 import { isShell, Os } from "./platform/Os.ts"
-import { Clock, Context, Deferred, type Duration, Effect, Layer, Logger, Metric, Schema, type Scope, Stream, type Tracer } from "effect"
+import {
+  Clock,
+  Context,
+  Deferred,
+  type Duration,
+  Effect,
+  Layer,
+  Logger,
+  Metric,
+  Ref,
+  Schema,
+  type Scope,
+  Stream,
+  type Tracer
+} from "effect"
 import { FetchHttpClient, type HttpClient } from "effect/http"
 import { OtlpExporter, OtlpLogger, OtlpSerialization } from "effect/observability"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { daemonLabel, isDockerRun, labelledContainer, runLabel } from "./ContainerLabels.ts"
 import { Pid, type ProcessOwner } from "./Ids.ts"
 import * as Metrics from "./Metrics.ts"
 import type { RunInfo, RunLine, RunRef } from "./Model.ts"
@@ -101,8 +116,42 @@ export class Proc extends Context.Service<
         const status = yield* Status
         const exportContext = yield* Effect.context<OtlpExporter.Flusher | OtlpSerialization.OtlpSerialization | HttpClient.HttpClient>()
 
-        const launch = (spawn: SpawnOptions) => {
-          const command = os.commandFor(spawn.run)
+        const launches = yield* Ref.make(0)
+
+        const containersLabelled = (label: string, value: string) =>
+          spawner
+            .string(ChildProcess.make("docker", ["ps", "-aq", "--filter", `label=${label}=${value}`]))
+            .pipe(Effect.map((output) => output.split("\n").filter((id) => id.trim().length > 0)))
+
+        const removeContainers = (ids: ReadonlyArray<string>) =>
+          ids.length === 0 ? Effect.void : spawner.string(ChildProcess.make("docker", ["rm", "-f", ...ids])).pipe(Effect.asVoid)
+
+        const removeRunContainer = (tag: string) =>
+          containersLabelled(runLabel, tag).pipe(
+            Effect.flatMap(removeContainers),
+            Effect.catchCause((cause) => Effect.logDebug(`could not remove the container of run ${tag}`, cause))
+          )
+
+        const reapContainers = Effect.forEach(registry.previousDaemons, (daemonId) => containersLabelled(daemonLabel, daemonId)).pipe(
+          Effect.map((found) => found.flat()),
+          Effect.tap(removeContainers),
+          Effect.tap((ids) =>
+            ids.length === 0 ? Effect.void : Effect.logInfo(`removed ${ids.length} containers left by a previous daemon`)
+          ),
+          Effect.catchCause((cause) => Effect.logDebug("could not look for containers left by a previous daemon", cause))
+        )
+
+        yield* reapContainers
+
+        const launch = Effect.fnUntraced(function* (spawn: SpawnOptions) {
+          const tag = `${registry.daemonId}-${yield* Ref.updateAndGet(launches, (n) => n + 1)}`
+          const handle = yield* start(spawn, labelledContainer(spawn.run, { daemon: registry.daemonId, run: tag }))
+          if (isDockerRun(spawn.run)) yield* Effect.addFinalizer(() => removeRunContainer(tag))
+          return handle
+        })
+
+        const start = (spawn: SpawnOptions, run: Run) => {
+          const command = os.commandFor(run)
           return spawner
             .spawn(
               ChildProcess.make(command.command, [...command.args], {

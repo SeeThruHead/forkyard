@@ -111,7 +111,9 @@ const dashboardServer = (options: DaemonOptions, dashboardUrl: string) =>
     { disableLogger: true }
   ).pipe(
     Layer.provide(RpcSerialization.layerJson),
-    Layer.provide(NodeHttpServer.layerServer(createServer, { port: options.httpPort, host: "127.0.0.1" })),
+    Layer.provide(
+      NodeHttpServer.layerServer(createServer, { port: options.httpPort, host: "127.0.0.1", gracefulShutdownTimeout: "3 seconds" })
+    ),
     Layer.provide(NodeHttpPlatform.layer),
     Layer.provide(Etag.layer)
   )

@@ -3,11 +3,11 @@ import { SecureRandom } from "effect/crypto"
 import { SqlClient } from "effect/sql"
 import { Os } from "./platform/Os.ts"
 import { uptime } from "node:os"
-import { AbsolutePath, BranchSlug, Pid, ProcessOwner, type ProjectName, type WorktreeId, worktreeId } from "./Ids.ts"
+import { AbsolutePath, BranchSlug, DaemonId, Pid, ProcessOwner, type ProjectName, type WorktreeId, worktreeId } from "./Ids.ts"
 
 export const ProcessRow = Schema.Struct({
   pid: Pid,
-  daemon_id: Schema.String,
+  daemon_id: DaemonId,
   boot_minute: Schema.Int,
   started_at: Schema.NullOr(Schema.Number)
 })
@@ -32,7 +32,7 @@ export const firstFreeName = (base: BranchSlug, project: ProjectName, taken: Rea
   return firstFreeName(base, project, taken, attempt + 1)
 }
 
-type Identity = { readonly daemonId: string; readonly bootMinute: number }
+type Identity = { readonly daemonId: DaemonId; readonly bootMinute: number }
 
 const bootMinute = Clock.currentTimeMillis.pipe(Effect.map((now) => Math.round((now - uptime() * 1000) / 60_000)))
 
@@ -43,6 +43,8 @@ const fromAnotherDaemon = (identity: Identity) => (row: ProcessRow) => row.daemo
 export class Registry extends Context.Service<
   Registry,
   {
+    readonly daemonId: DaemonId
+    readonly previousDaemons: ReadonlyArray<DaemonId>
     readonly track: (process: {
       readonly pid: Pid
       readonly owner: ProcessOwner
@@ -61,7 +63,7 @@ export class Registry extends Context.Service<
       const fs = yield* FileSystem.FileSystem
       const os = yield* Os
       const random = yield* SecureRandom.SecureRandom
-      const identity: Identity = { daemonId: yield* random.uuidV4(), bootMinute: yield* bootMinute }
+      const identity: Identity = { daemonId: DaemonId.make(yield* random.uuidV4()), bootMinute: yield* bootMinute }
 
       const previousProcesses = sql`SELECT pid, daemon_id, boot_minute, started_at FROM processes`.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ProcessRow))),
@@ -81,9 +83,12 @@ export class Registry extends Context.Service<
           yield* sql`DELETE FROM processes`.pipe(Effect.orDie)
 
           yield* Effect.annotateCurrentSpan({ "forkyard.reaped": alive.length, "forkyard.stale_rows": rows.length - candidates.length })
-          return alive
+          return {
+            reaped: alive.length,
+            previousDaemons: [...new Set(rows.filter(fromAnotherDaemon(identity)).map((row) => row.daemon_id))]
+          }
         },
-        Effect.tap((alive) => Effect.logInfo(`reaped ${alive.length} orphaned processes from a previous daemon`))
+        Effect.tap(({ reaped }) => Effect.logInfo(`reaped ${reaped} orphaned processes from a previous daemon`))
       )
 
       const track = Effect.fnUntraced(function* (process: { readonly pid: Pid; readonly owner: ProcessOwner; readonly service: string }) {
@@ -135,9 +140,9 @@ export class Registry extends Context.Service<
         Effect.orDie
       )
 
-      yield* reapOrphans()
+      const { previousDaemons } = yield* reapOrphans()
 
-      return Registry.of({ track, nameFor, markUp, markDown, desiredUp })
+      return Registry.of({ daemonId: identity.daemonId, previousDaemons, track, nameFor, markUp, markDown, desiredUp })
     })
   )
 }
