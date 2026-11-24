@@ -128,7 +128,9 @@ const Branch = ({
         >
           {expanded ? "▾" : "▸"}
         </button>
-        <span className="branch-label">{worktree.branch}</span>
+        <a className="branch-label" href={`#/wt/${worktree.id}`} onClick={(event) => event.stopPropagation()}>
+          {worktree.branch}
+        </a>
         <span className={`stat c-${health.state}`}>{health.label}</span>
         {sharedCountOf(worktree) > 0 ? <span className="stat shared">{sharedCountOf(worktree)} shared</span> : null}
         <span className={`stat ${infraReady === infra.length ? "dim" : "c-Starting"}`}>
@@ -184,10 +186,20 @@ const Repo = ({
   return (
     <div className="repo">
       <div className="repo-head" onClick={onToggle}>
-        <span className="caret">{open ? "▾" : "▸"}</span>
-        <span className="repo-name" style={{ color: keyColor(project) }}>
-          {project}
-        </span>
+        <button
+          type="button"
+          className="repo-toggle"
+          aria-expanded={open}
+          onClick={(event) => {
+            event.stopPropagation()
+            onToggle()
+          }}
+        >
+          <span className="caret">{open ? "▾" : "▸"}</span>
+          <span className="repo-name" style={{ color: keyColor(project) }}>
+            {project}
+          </span>
+        </button>
         <span className="dim">
           {worktrees.length} {worktrees.length === 1 ? "branch" : "branches"}
         </span>
