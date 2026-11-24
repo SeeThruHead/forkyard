@@ -26,7 +26,7 @@ const idOf = (dependency: typeof Dependency.Type) => (typeof dependency === "str
 const dependenciesOf = (project: Project) => (project.config?.dependsOn ?? []).map(idOf)
 
 const closure = (graph: Graph, ids: ReadonlyArray<string>, seen: ReadonlySet<string> = new Set()): ReadonlySet<string> => {
-  const fresh = ids.filter((id) => !seen.has(id) && graph[id])
+  const fresh = [...new Set(ids)].filter((id) => !seen.has(id) && graph[id])
   if (fresh.length === 0) return seen
   const next = new Set([...seen, ...fresh])
   return closure(

@@ -3,7 +3,7 @@ import type { Port } from "./Ids.ts"
 
 export type Route = { readonly host: string; readonly port: Port; readonly upstream?: string; readonly builtIn?: string }
 
-export const routeId = (host: string) => host.replaceAll(".", "-")
+export const routeId = (host: string) => host.replaceAll("-", "--").replaceAll(".", "-")
 
 export const traefikConfig = (routes: Readonly<Record<string, Route>>, upstreamHost: string) => {
   const entries = Object.values(routes)

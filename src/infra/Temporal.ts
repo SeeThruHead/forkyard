@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { InfraName } from "../Ids.ts"
-import { cmd, type Env, type InfraServer, type InfraSpec, type InfraTools, type Worktree } from "../Stack.ts"
+import { cmd, type Env, type InfraError, type InfraServer, type InfraSpec, type InfraTools, type Worktree } from "../Stack.ts"
 import { fetchOk, port, readyOrExit, upperSnake } from "./Shared.ts"
 
 export type TemporalTenant = {
@@ -16,6 +16,8 @@ type Options = {
   readonly namespaces: ReadonlyArray<string>
   readonly env?: (temporal: TemporalTenant) => Env
 }
+
+const alreadyExists = (error: InfraError) => /already exists/i.test(error.message)
 
 export const dev = (options: Options): InfraSpec => {
   const name = InfraName.make(options.name ?? "temporal")
@@ -61,7 +63,11 @@ export const dev = (options: Options): InfraSpec => {
           env: {},
           cwd: "/"
         })
-        .pipe(Effect.scoped, Effect.ignore)
+        .pipe(
+          Effect.scoped,
+          Effect.asVoid,
+          Effect.catchIf(alreadyExists, () => Effect.void)
+        )
     if (options.scope === "shared") yield* Effect.forEach(options.namespaces, create, { discard: true })
 
     const tenant: TemporalTenant = {

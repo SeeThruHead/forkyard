@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schema, Stream, SubscriptionRef } from "effect"
+import { Context, Effect, Layer, Schema, Semaphore, Stream, SubscriptionRef } from "effect"
 import { SqlClient } from "effect/sql"
 import type { WorktreeId } from "./Ids.ts"
 
@@ -29,16 +29,16 @@ export class Pins extends Context.Service<
       const sql = yield* SqlClient.SqlClient
       const load = sql`SELECT worktree, service, kind FROM pins`.pipe(Effect.flatMap(decodeRows), Effect.orDie)
       const state = yield* SubscriptionRef.make(yield* load)
+      const writing = yield* Semaphore.make(1)
       const reload = load.pipe(Effect.flatMap((rows) => SubscriptionRef.set(state, rows)))
+      const thenPublish = <E>(change: Effect.Effect<unknown, E>) =>
+        change.pipe(Effect.orDie, Effect.andThen(reload), Semaphore.withPermit(writing))
 
       const pin = (id: WorktreeId, service: string, kind: PinKind) =>
-        sql`INSERT OR IGNORE INTO pins (worktree, service, kind) VALUES (${id}, ${service}, ${kind})`.pipe(
-          Effect.orDie,
-          Effect.andThen(reload)
-        )
+        thenPublish(sql`INSERT OR IGNORE INTO pins (worktree, service, kind) VALUES (${id}, ${service}, ${kind})`)
 
       const unpin = (id: WorktreeId, service: string, kind: PinKind) =>
-        sql`DELETE FROM pins WHERE worktree = ${id} AND service = ${service} AND kind = ${kind}`.pipe(Effect.orDie, Effect.andThen(reload))
+        thenPublish(sql`DELETE FROM pins WHERE worktree = ${id} AND service = ${service} AND kind = ${kind}`)
 
       const changes = (id: WorktreeId, kind: PinKind) =>
         SubscriptionRef.changes(state).pipe(
