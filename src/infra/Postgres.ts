@@ -1,7 +1,7 @@
 import { PgClient } from "@effect/sql-pg"
-import { type Duration, Effect, Redacted } from "effect"
+import { type Duration, Effect, Option, Redacted, Schedule } from "effect"
 import { SqlClient } from "effect/sql"
-import { databaseName, InfraName, type Port } from "../Ids.ts"
+import { branchSlug, databaseName, InfraName, type Port, templateDatabaseName, worktreeId } from "../Ids.ts"
 import { cmd, type Env, InfraError, type InfraServer, type InfraSpec, type InfraTools, type Run, toRun, type Worktree } from "../Stack.ts"
 import { containerName, dockerContainer, dockerReach, port, publish, readyOrExit } from "./Shared.ts"
 
@@ -56,11 +56,11 @@ const sealed = Effect.fnUntraced(function* (database: string) {
   return (rows[0]?.n ?? 0) > 0
 })
 
-const closeTo = (database: string) =>
-  SqlClient.SqlClient.use((sql) =>
-    sql`ALTER DATABASE ${sql(database)} WITH ALLOW_CONNECTIONS false`.pipe(
-      Effect.andThen(sql`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${database} AND pid <> pg_backend_pid()`)
-    )
+const closeTo = (database: string) => SqlClient.SqlClient.use((sql) => sql`ALTER DATABASE ${sql(database)} WITH ALLOW_CONNECTIONS false`)
+
+const endSessions = (database: string) =>
+  SqlClient.SqlClient.use(
+    (sql) => sql`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${database} AND pid <> pg_backend_pid()`
   )
 
 const openTo = (database: string) => SqlClient.SqlClient.use((sql) => sql`ALTER DATABASE ${sql(database)} WITH ALLOW_CONNECTIONS true`)
@@ -78,10 +78,18 @@ const dropTemplate = (database: string) =>
 
 const dropDatabase = (database: string) => SqlClient.SqlClient.use((sql) => sql`DROP DATABASE IF EXISTS ${sql(database)} WITH (FORCE)`)
 
+const dropIfUnused = (database: string) => SqlClient.SqlClient.use((sql) => sql`DROP DATABASE IF EXISTS ${sql(database)}`)
+
 const connectionsTo = (database: string) =>
   SqlClient.SqlClient.use(
     (sql) => sql<{ readonly n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = ${database}`
   ).pipe(Effect.map((rows) => rows[0]?.n ?? 0))
+
+const untilNoSessions = (database: string) =>
+  connectionsTo(database).pipe(
+    Effect.flatMap((sessions) => (sessions === 0 ? Effect.void : Effect.fail(`${database} still has ${sessions} sessions`))),
+    Effect.retry(Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "10 seconds" })))
+  )
 
 export const docker = (options: Options): InfraSpec => {
   const name = InfraName.make(options.name ?? "postgres")
@@ -97,10 +105,15 @@ export const docker = (options: Options): InfraSpec => {
     onDatabase(serverPort, "postgres", effect).pipe(step(label))
 
   const databaseOf = (worktree: Worktree) => options.database?.(worktree) ?? databaseName(worktree.project, worktree.branch)
-  const goldenOf = (worktree: Worktree) => databaseName(worktree.project, "golden")
+  const goldenOf = (worktree: Worktree) => templateDatabaseName(worktree.project)
+  const worktreeOnBranch = (worktree: Worktree, branch: string): Worktree =>
+    Option.match(branchSlug(branch), {
+      onNone: () => worktree,
+      onSome: (slug) => ({ ...worktree, id: worktreeId(slug, worktree.project), branch: slug })
+    })
   const sourceOf = (worktree: Worktree, golden: Golden) =>
-    "snapshot" in golden ? databaseName(worktree.project, golden.snapshot.worktree) : undefined
-  const isSnapshotSource = (worktree: Worktree, golden: Golden) => "snapshot" in golden && golden.snapshot.worktree === worktree.branch
+    "snapshot" in golden ? databaseOf(worktreeOnBranch(worktree, golden.snapshot.worktree)) : undefined
+  const isSnapshotSource = (worktree: Worktree, golden: Golden) => sourceOf(worktree, golden) === databaseOf(worktree)
 
   const migrateGolden = Effect.fn("Postgres.migrateGolden")(function* (
     serverPort: Port,
@@ -126,7 +139,11 @@ export const docker = (options: Options): InfraSpec => {
 
     yield* Effect.acquireUseRelease(
       onServer(serverPort, `close ${source} for a moment`, closeTo(source)),
-      () => onServer(serverPort, "snapshot golden", createFrom(golden, source)),
+      () =>
+        onServer(serverPort, `end sessions on ${source}`, endSessions(source)).pipe(
+          Effect.andThen(onServer(serverPort, `wait for sessions on ${source} to end`, untilNoSessions(source))),
+          Effect.andThen(onServer(serverPort, "snapshot golden", createFrom(golden, source)))
+        ),
       () => onServer(serverPort, `reopen ${source}`, openTo(source)).pipe(Effect.orDie)
     )
   })
@@ -291,8 +308,10 @@ export const docker = (options: Options): InfraSpec => {
     const serverPort = yield* serverPortOf(server)
     const database = databaseOf(tenant)
     if ((yield* onServer(serverPort, "count connections", connectionsTo(database))) > 0) return false
-    yield* onServer(serverPort, "drop unused database", dropDatabase(database))
-    return true
+    return yield* onServer(serverPort, "drop unused database", dropIfUnused(database)).pipe(
+      Effect.as(true),
+      Effect.catch(() => Effect.succeed(false))
+    )
   })
 
   return {

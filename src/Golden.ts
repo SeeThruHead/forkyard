@@ -80,10 +80,17 @@ export class Golden extends Context.Service<
 
         const swap = Effect.fn("Golden.swap")(
           function* () {
-            yield* sql`ALTER DATABASE ${sql(next)} WITH ALLOW_CONNECTIONS false IS_TEMPLATE true`
-            yield* sql`ALTER DATABASE ${sql(golden)} WITH IS_TEMPLATE false`
-            yield* sql`ALTER DATABASE ${sql(golden)} RENAME TO ${sql(old)}`
-            yield* sql`ALTER DATABASE ${sql(next)} RENAME TO ${sql(golden)}`
+            yield* sql.withTransaction(
+              Effect.all(
+                [
+                  sql`ALTER DATABASE ${sql(next)} WITH ALLOW_CONNECTIONS false IS_TEMPLATE true`,
+                  sql`ALTER DATABASE ${sql(golden)} WITH IS_TEMPLATE false`,
+                  sql`ALTER DATABASE ${sql(golden)} RENAME TO ${sql(old)}`,
+                  sql`ALTER DATABASE ${sql(next)} RENAME TO ${sql(golden)}`
+                ],
+                { discard: true }
+              )
+            )
             yield* sql`DROP DATABASE ${sql(old)}`
           },
           step("swap"),

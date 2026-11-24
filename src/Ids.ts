@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Hash, Schema } from "effect"
 
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
@@ -38,6 +38,9 @@ export const worktreeId = (branch: BranchSlug, project: ProjectName): WorktreeId
 export const Pid = positiveInt.pipe(Schema.brand("Pid"))
 export type Pid = typeof Pid.Type
 
+export const DaemonId = Schema.String.pipe(Schema.brand("DaemonId"))
+export type DaemonId = typeof DaemonId.Type
+
 export const RunId = positiveInt.pipe(Schema.brand("RunId"))
 export type RunId = typeof RunId.Type
 
@@ -53,15 +56,23 @@ export const DatabaseName = Schema.String.pipe(
 )
 export type DatabaseName = typeof DatabaseName.Type
 
-export const databaseName = (...parts: ReadonlyArray<string>): DatabaseName =>
-  DatabaseName.make(
-    parts
-      .join("_")
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9]+/g, "_")
-      .replace(/^(?=[0-9])/, "_")
-      .slice(0, 63)
-  )
+const identifierLimit = 63
+
+const keptPrefix = 54
+
+const normalized = (parts: ReadonlyArray<string>) =>
+  parts
+    .join("_")
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/g, "_")
+    .replace(/^(?=[0-9])/, "_")
+
+const withinLimit = (name: string) =>
+  name.length <= identifierLimit ? name : `${name.slice(0, keptPrefix)}_${(Hash.string(name) >>> 0).toString(36).padStart(7, "0")}`
+
+export const databaseName = (...parts: ReadonlyArray<string>): DatabaseName => DatabaseName.make(withinLimit(normalized(parts)))
+
+export const templateDatabaseName = (project: string): DatabaseName => DatabaseName.make(withinLimit(`${normalized([project])}__golden`))
 
 export const AbsolutePath = Schema.String.pipe(Schema.check(Schema.isPattern(/^\//)), Schema.brand("AbsolutePath"))
 export type AbsolutePath = typeof AbsolutePath.Type

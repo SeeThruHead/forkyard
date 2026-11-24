@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Option } from "effect"
-import { BranchSlug, branchSlug, databaseName, Port, ProjectName, ServiceName, worktreeId } from "../src/Ids.ts"
+import { BranchSlug, branchSlug, databaseName, Port, ProjectName, ServiceName, templateDatabaseName, worktreeId } from "../src/Ids.ts"
 
 describe("ids", () => {
   it("only accepts names that are safe in a hostname", () => {
@@ -22,6 +22,20 @@ describe("ids", () => {
   it("makes database names Postgres accepts", () => {
     expect(databaseName("storefront", "feat-gift-cards")).toBe("storefront_feat_gift_cards")
     expect(databaseName("2024", "x")).toBe("_2024_x")
+  })
+
+  it("keeps long database names distinct and within 63 characters", () => {
+    const prefix = "a-very-long-branch-name-that-goes-on-and-on-past-the-limit"
+    const first = databaseName("storefront", `${prefix}-one`)
+    const second = databaseName("storefront", `${prefix}-two`)
+
+    expect(first).not.toBe(second)
+    expect(first.length).toBeLessThanOrEqual(63)
+    expect(databaseName("storefront", `${prefix}-one`)).toBe(first)
+  })
+
+  it("gives golden templates names no worktree database can have", () => {
+    expect(templateDatabaseName("storefront")).not.toBe(databaseName("storefront", "golden"))
   })
 
   it("rejects ports outside 1 to 65535", () => {
